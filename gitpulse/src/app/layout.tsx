@@ -2,9 +2,7 @@ import "@/styles/globals.css";
 
 import { type Metadata } from "next";
 import { Geist } from "next/font/google";
-import { DM_Sans } from "next/font/google";
-
-import { TRPCReactProvider } from "@/trpc/react";
+import { Space_Grotesk } from "next/font/google";
 
 export const metadata: Metadata = {
   title: "GitPulse",
@@ -18,10 +16,10 @@ const geist = Geist({
   variable: "--font-geist-sans",
 });
 
-const dmSans = DM_Sans({
+const spaceGrotesk = Space_Grotesk({
   subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-  variable: "--font-dm-sans",
+  weight: ["300", "400", "500", "600", "700"],
+  variable: "--font-space-grotesk",
   display: "swap",
 });
 
@@ -29,9 +27,9 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${geist.variable} ${dmSans.variable}`}>
+    <html lang="en" className={`${geist.variable} ${spaceGrotesk.variable}`}>
       <body>
-        <TRPCReactProvider>{children}</TRPCReactProvider>
+        {children}
       </body>
     </html>
   );

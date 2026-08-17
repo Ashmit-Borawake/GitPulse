@@ -157,19 +157,20 @@ Cards on antigravity.google are **flat white surfaces** with a soft box-shadow �
 
 ### Font Families
 
-The antigravity.google site uses **Google Sans** — a rounded, humanist geometric sans-serif. Since Google Sans is not publicly available via Google Fonts for third-party use, we use **DM Sans** as the nearest open-source equivalent (same rounded, open letterforms and proportions).
+The antigravity.google site uses **Google Sans** — a rounded, humanist geometric sans-serif. Since Google Sans is not publicly available via Google Fonts for third-party use, we use **Space Grotesk** as the permanent primary font to provide a modern, clean, and distinct geometric look.
 
 ```css
-/* Primary UI font — rounded humanist sans-serif */
---font-sans: 'DM Sans', sans-serif;
+/* Primary UI font — modern geometric sans-serif */
+--font-sans: "Space Grotesk", system-ui, sans-serif;
+--font-display: "Space Grotesk", sans-serif;
 
 /* Code / commit hashes / diffs / terminal */
 --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 
-/* No separate display font — DM Sans at large weight serves all heading roles */
+/* Space Grotesk serves all heading and body roles */
 ```
 
-Import: `DM Sans` (weights 400, 500, 600, 700) + `JetBrains Mono` (400, 500) from Google Fonts.
+Import: `Space Grotesk` (weights 300, 400, 500, 600, 700) + `JetBrains Mono` (400, 500) from Google Fonts.
 
 ### Type Scale
 

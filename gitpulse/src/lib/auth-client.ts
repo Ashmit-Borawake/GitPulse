@@ -1,4 +1,6 @@
 import { createAuthClient } from "better-auth/react";
+import { inferAdditionalFields } from "better-auth/client/plugins";
+import type { auth } from "./auth";
 
 /**
  * Better Auth client instance for use in React Client Components.
@@ -24,6 +26,7 @@ export const authClient = createAuthClient({
     typeof window !== "undefined"
       ? window.location.origin
       : process.env.BETTER_AUTH_URL ?? "http://localhost:3001",
+  plugins: [inferAdditionalFields<typeof auth>()],
 });
 
 // Re-export the individual methods for cleaner imports in pages.

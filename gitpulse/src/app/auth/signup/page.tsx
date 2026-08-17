@@ -18,8 +18,8 @@ interface PasswordFieldProps {
   label: string;
   autoComplete: string;
   placeholder: string;
-  value: string;          // field value
-  showPassword: boolean;  // eye-toggle state
+  value: string; // field value
+  showPassword: boolean; // eye-toggle state
   disabled?: boolean;
   onChange: (v: string) => void;
   onToggle: () => void;
@@ -98,7 +98,8 @@ export default function SignupPage() {
   }, [session, router]);
 
   // ── Form state ──────────────────────────────────────────────────────────────
-  const [name, setName] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -117,8 +118,8 @@ export default function SignupPage() {
     setError(null);
 
     // Client-side validation
-    if (!name.trim()) {
-      setError("Please enter your name.");
+    if (!firstName.trim() || !lastName.trim()) {
+      setError("Please enter your full name.");
       return;
     }
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -137,7 +138,9 @@ export default function SignupPage() {
     setIsLoading(true);
     try {
       const result = await authClient.signUp.email({
-        name: name.trim(),
+        name: `${firstName.trim()} ${lastName.trim()}`,
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
         email,
         password,
       });
@@ -168,8 +171,7 @@ export default function SignupPage() {
       <div
         className="flex min-h-svh items-center justify-center px-4 py-12"
         style={{ backgroundColor: "var(--gp-bg-base)" }}
-      >
-      </div>
+      ></div>
     );
   }
 
@@ -219,32 +221,63 @@ export default function SignupPage() {
         )}
 
         {/* Form */}
-        <form className="flex flex-col gap-5" onSubmit={handleSubmit} noValidate>
-          {/* Name field */}
-          <div className="flex flex-col gap-1.5">
-            <Label
-              htmlFor="signup-name"
-              className="text-[0.8125rem] font-medium"
-              style={{ color: "var(--gp-text-primary)" }}
-            >
-              Name
-            </Label>
-            <Input
-              id="signup-name"
-              type="text"
-              autoComplete="name"
-              placeholder="John Doe"
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={isLoading}
-              className="h-10 rounded-[10px] px-3 text-[0.9375rem]"
-              style={{
-                backgroundColor: "var(--gp-bg-elevated)",
-                borderColor: "var(--gp-border-default)",
-                color: "var(--gp-text-primary)",
-              }}
-            />
+        <form
+          className="flex flex-col gap-5"
+          onSubmit={handleSubmit}
+          noValidate
+        >
+          {/* Name fields */}
+          <div className="flex gap-4">
+            <div className="flex flex-1 flex-col gap-1.5">
+              <Label
+                htmlFor="signup-first-name"
+                className="text-[0.8125rem] font-medium"
+                style={{ color: "var(--gp-text-primary)" }}
+              >
+                First Name
+              </Label>
+              <Input
+                id="signup-first-name"
+                type="text"
+                autoComplete="given-name"
+                placeholder="John"
+                required
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                disabled={isLoading}
+                className="h-10 rounded-[10px] px-3 text-[0.9375rem]"
+                style={{
+                  backgroundColor: "var(--gp-bg-elevated)",
+                  borderColor: "var(--gp-border-default)",
+                  color: "var(--gp-text-primary)",
+                }}
+              />
+            </div>
+            <div className="flex flex-1 flex-col gap-1.5">
+              <Label
+                htmlFor="signup-last-name"
+                className="text-[0.8125rem] font-medium"
+                style={{ color: "var(--gp-text-primary)" }}
+              >
+                Last Name
+              </Label>
+              <Input
+                id="signup-last-name"
+                type="text"
+                autoComplete="family-name"
+                placeholder="Doe"
+                required
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                disabled={isLoading}
+                className="h-10 rounded-[10px] px-3 text-[0.9375rem]"
+                style={{
+                  backgroundColor: "var(--gp-bg-elevated)",
+                  borderColor: "var(--gp-border-default)",
+                  color: "var(--gp-text-primary)",
+                }}
+              />
+            </div>
           </div>
 
           {/* Email field */}

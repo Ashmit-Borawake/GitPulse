@@ -1,15 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
-import { authClient, useSession } from "@/lib/auth-client";
+import { authClient } from "@/lib/auth-client";
 
 // ── Inline SVGs for OAuth brand icons ──────────────────────────────────────
 
@@ -57,13 +57,6 @@ function GitHubIcon({ className }: { className?: string }) {
 
 export default function LoginPage() {
   const router = useRouter();
-  const { data: session, isPending: isSessionLoading } = useSession();
-
-  useEffect(() => {
-    if (session) {
-      router.push("/dashboard");
-    }
-  }, [session, router]);
 
   // ── Form state ──────────────────────────────────────────────────────────────
   const [email, setEmail] = useState("");
@@ -146,18 +139,7 @@ export default function LoginPage() {
     }
   }
 
-  const anyLoading = isLoading || isGoogleLoading || isGithubLoading || isSessionLoading;
-
-  if (isSessionLoading) {
-    return (
-      <div
-        className="flex min-h-svh items-center justify-center px-4 py-12"
-        style={{ backgroundColor: "var(--gp-bg-base)" }}
-      >
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  const anyLoading = isLoading || isGoogleLoading || isGithubLoading;
 
   return (
     <div

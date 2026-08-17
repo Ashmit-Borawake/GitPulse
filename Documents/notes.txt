@@ -1,0 +1,5 @@
+1)make password check more good at the end
+
+2)at the end , check session direclty on home /Landing page if its there then show dahboard button else login/signup
+
+3)

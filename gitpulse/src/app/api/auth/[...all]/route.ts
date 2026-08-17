@@ -17,7 +17,8 @@ import { toNextJsHandler } from "better-auth/next-js";
  * Better Auth handles all of these internally.
  */
 import { db } from "@/server/db";
-import { NextRequest, NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import { NextResponse } from "next/server";
 
 const handler = toNextJsHandler(auth);
 
@@ -27,8 +28,8 @@ export async function POST(request: NextRequest) {
   if (request.nextUrl.pathname === "/api/auth/sign-in/email") {
     const clonedRequest = request.clone();
     try {
-      const body = await clonedRequest.json();
-      if (body && body.email) {
+      const body = (await clonedRequest.json()) as { email?: string };
+      if (body?.email) {
         const user = await db.user.findUnique({
           where: { email: body.email },
           select: { id: true },

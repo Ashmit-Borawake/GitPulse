@@ -16,7 +16,10 @@ model User {
   name          String
   email         String
   emailVerified Boolean   @default(false)
-  image         String?
+  imageUrl      String?
+  firstName     String?
+  lastName      String?
+  credits       Int       @default(150)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
   sessions      Session[]
@@ -72,4 +75,15 @@ model Verification {
 
   @@index([identifier])
   @@map("verification")
+}
+
+model Project {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  name      String
+  githubUrl String
+
+  deletedAt DateTime?
 }
