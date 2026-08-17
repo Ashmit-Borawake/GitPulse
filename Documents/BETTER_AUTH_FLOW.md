@@ -167,7 +167,7 @@ Better Auth  →  Prisma Adapter  →  Prisma Client  →  PostgreSQL
 
 ## 7. Email/Password Signup — COMPLETE FLOW
 
-1. User opens `/auth/signup` in their browser.
+1. User opens `/auth/signup` in their browser. (If they are already logged in, the `useSession` hook will detect their session and redirect them to `/dashboard`).
 2. React renders the signup form (Client Component).
 3. User enters their Name, Email, and Password.
 4. GitPulse runs **client-side validation** (e.g., verifying passwords match).
@@ -187,7 +187,7 @@ Better Auth  →  Prisma Adapter  →  Prisma Client  →  PostgreSQL
 
 ## 8. Email/Password Login — COMPLETE FLOW
 
-1. User opens `/auth/login`.
+1. User opens `/auth/login`. (If they are already logged in, the `useSession` hook will detect their session and redirect them to `/dashboard`).
 2. User enters Email and Password and clicks Login.
 3. The form calls `authClient.signIn.email(...)`.
 4. `authClient` sends a `POST` request to `/api/auth/sign-in/email`.
@@ -286,6 +286,9 @@ HTTP is a "stateless" protocol. When a browser asks for `/dashboard`, the server
 4. The server reads the cookie, looks up the token in PostgreSQL, finds the matching `User`, and says "Ah, you are logged in as Ashmit!"
 
 This is how the browser stays logged in even if you refresh the page or close the tab.
+
+### Session Lifespan
+In GitPulse, the session is explicitly configured in `src/lib/auth.ts` to last for **2 days**. If the session is not renewed within that time, it expires and the user will need to log in again.
 
 ---
 

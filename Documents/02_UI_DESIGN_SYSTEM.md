@@ -254,6 +254,7 @@ The signature button from antigravity.google: dark near-black pill, white text. 
   font-size: 15px;
   font-weight: 500;
   border: none;
+  cursor: pointer;
   transition: opacity 100ms ease;
 }
 .btn-primary:hover { opacity: 0.85; }
@@ -272,6 +273,7 @@ In dark mode, this inverts: near-white background, dark text.
   padding: 10px 20px;
   font-size: 15px;
   font-weight: 500;
+  cursor: pointer;
   transition: background 150ms ease, border-color 150ms ease;
 }
 .btn-secondary:hover {

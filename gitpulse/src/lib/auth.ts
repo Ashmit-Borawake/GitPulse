@@ -30,6 +30,12 @@ export const auth = betterAuth({
   // ── Secret ───────────────────────────────────────────────────────────────────
   secret: env.BETTER_AUTH_SECRET,
 
+  // ── Session ──────────────────────────────────────────────────────────────────
+  session: {
+    expiresIn: 60 * 60 * 24 * 2, // 2 days in seconds
+    updateAge: 60 * 60 * 24, // update the session in the DB every 1 day
+  },
+
   // ── Email & Password ─────────────────────────────────────────────────────────
   emailAndPassword: {
     enabled: true,

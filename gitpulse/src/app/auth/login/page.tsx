@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Eye, EyeOff } from "lucide-react";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
-import { authClient } from "@/lib/auth-client";
+import { authClient, useSession } from "@/lib/auth-client";
 
 // ── Inline SVGs for OAuth brand icons ──────────────────────────────────────
 
@@ -57,6 +57,13 @@ function GitHubIcon({ className }: { className?: string }) {
 
 export default function LoginPage() {
   const router = useRouter();
+  const { data: session, isPending: isSessionLoading } = useSession();
+
+  useEffect(() => {
+    if (session) {
+      router.push("/dashboard");
+    }
+  }, [session, router]);
 
   // ── Form state ──────────────────────────────────────────────────────────────
   const [email, setEmail] = useState("");
@@ -135,7 +142,17 @@ export default function LoginPage() {
     }
   }
 
-  const anyLoading = isLoading || isGoogleLoading || isGithubLoading;
+  const anyLoading = isLoading || isGoogleLoading || isGithubLoading || isSessionLoading;
+
+  if (isSessionLoading) {
+    return (
+      <div
+        className="flex min-h-svh items-center justify-center px-4 py-12"
+        style={{ backgroundColor: "var(--gp-bg-base)" }}
+      >
+      </div>
+    );
+  }
 
   return (
     <div
@@ -257,7 +274,7 @@ export default function LoginPage() {
                 type="button"
                 onClick={() => setShowPassword((v) => !v)}
                 aria-label={showPassword ? "Hide password" : "Show password"}
-                className="absolute top-1/2 right-3 flex -translate-y-1/2 items-center justify-center rounded p-0.5 transition-colors duration-150 focus-visible:ring-2 focus-visible:outline-none"
+                className="absolute top-1/2 right-3 flex -translate-y-1/2 cursor-pointer items-center justify-center rounded p-0.5 transition-colors duration-150 focus-visible:ring-2 focus-visible:outline-none"
                 style={{
                   color: "var(--gp-text-tertiary)",
                 }}
@@ -293,7 +310,7 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={anyLoading}
-            className="flex h-11 w-full items-center justify-center rounded-full text-[0.9375rem] font-medium transition-opacity duration-100 hover:opacity-85 focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex h-11 w-full cursor-pointer items-center justify-center rounded-full text-[0.9375rem] font-medium transition-opacity duration-100 hover:opacity-85 focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
             style={{
               backgroundColor: "var(--gp-btn-primary-bg)",
               color: "var(--gp-btn-primary-text)",
@@ -327,7 +344,7 @@ export default function LoginPage() {
               type="button"
               onClick={handleGoogleSignIn}
               disabled={anyLoading}
-              className="flex h-11 w-full items-center justify-center gap-2.5 rounded-full text-[0.9375rem] font-medium transition-colors duration-150 hover:opacity-85 focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex h-11 w-full cursor-pointer items-center justify-center gap-2.5 rounded-full text-[0.9375rem] font-medium transition-colors duration-150 hover:opacity-85 focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
               style={{
                 backgroundColor: "var(--gp-bg-surface)",
                 border: "1px solid var(--gp-border-default)",
@@ -343,7 +360,7 @@ export default function LoginPage() {
               type="button"
               onClick={handleGithubSignIn}
               disabled={anyLoading}
-              className="flex h-11 w-full items-center justify-center gap-2.5 rounded-full text-[0.9375rem] font-medium transition-colors duration-150 hover:opacity-85 focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+              className="flex h-11 w-full cursor-pointer items-center justify-center gap-2.5 rounded-full text-[0.9375rem] font-medium transition-colors duration-150 hover:opacity-85 focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
               style={{
                 backgroundColor: "var(--gp-bg-surface)",
                 border: "1px solid var(--gp-border-default)",

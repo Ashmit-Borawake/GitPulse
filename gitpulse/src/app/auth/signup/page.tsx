@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Eye, EyeOff } from "lucide-react";
@@ -8,7 +8,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { authClient } from "@/lib/auth-client";
+import { authClient, useSession } from "@/lib/auth-client";
 
 // ── Password visibility toggle button ──────────────────────────────────────
 // Small, self-contained — only used inside this file.
@@ -69,7 +69,7 @@ function PasswordField({
           className={cn(
             "absolute top-1/2 right-3 -translate-y-1/2",
             "flex items-center justify-center rounded p-0.5",
-            "transition-colors duration-150",
+            "cursor-pointer transition-colors duration-150",
             "focus-visible:ring-2 focus-visible:outline-none",
           )}
           style={{ color: "var(--gp-text-tertiary)" }}
@@ -89,6 +89,13 @@ function PasswordField({
 
 export default function SignupPage() {
   const router = useRouter();
+  const { data: session, isPending: isSessionLoading } = useSession();
+
+  useEffect(() => {
+    if (session) {
+      router.push("/dashboard");
+    }
+  }, [session, router]);
 
   // ── Form state ──────────────────────────────────────────────────────────────
   const [name, setName] = useState("");
@@ -154,6 +161,16 @@ export default function SignupPage() {
     } finally {
       setIsLoading(false);
     }
+  }
+
+  if (isSessionLoading) {
+    return (
+      <div
+        className="flex min-h-svh items-center justify-center px-4 py-12"
+        style={{ backgroundColor: "var(--gp-bg-base)" }}
+      >
+      </div>
+    );
   }
 
   return (
@@ -287,7 +304,7 @@ export default function SignupPage() {
           <button
             type="submit"
             disabled={isLoading}
-            className="flex h-11 w-full items-center justify-center rounded-full text-[0.9375rem] font-medium transition-opacity duration-100 hover:opacity-85 focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
+            className="flex h-11 w-full cursor-pointer items-center justify-center rounded-full text-[0.9375rem] font-medium transition-opacity duration-100 hover:opacity-85 focus-visible:ring-2 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60"
             style={{
               backgroundColor: "var(--gp-btn-primary-bg)",
               color: "var(--gp-btn-primary-text)",

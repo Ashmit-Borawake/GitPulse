@@ -1,4 +1,5 @@
 import { HydrateClient } from "@/trpc/server";
+import Link from "next/link";
 
 export default async function Home() {
   return (
@@ -11,6 +12,14 @@ export default async function Home() {
           <p className="text-2xl text-gray-300">
             A clean foundation for your project.
           </p>
+          <div className="mt-8 flex gap-4">
+            <Link
+              href="/auth/login"
+              className="rounded-full bg-blue-600 px-8 py-3 font-semibold text-white transition hover:bg-blue-700"
+            >
+              Sign In
+            </Link>
+          </div>
         </div>
       </main>
     </HydrateClient>

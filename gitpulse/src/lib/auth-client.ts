@@ -6,7 +6,7 @@ import { createAuthClient } from "better-auth/react";
  * Authentication model: session + HTTP-only cookie.
  * No JWT configuration. No access tokens. No JWKS.
  *
- * The session cookie is managed automatically by Better Auth.
+ * The session cookie zis managed automatically by Better Auth.
  * Do not manually create, read, or delete authentication cookies.
  *
  * Available methods:

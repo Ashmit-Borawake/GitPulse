@@ -35,6 +35,7 @@ GitPulse/                          ← Monorepo root
 │   ├── 02_UI_DESIGN_SYSTEM.md
 │   ├── 03_PAGE_IMPLEMENTATION.md
 │   ├── 04_ANIMATIONS_AND_SCROLL.md
+│   ├── BETTER_AUTH_FLOW.md
 │   └── GITPULSE_PROJECT_STRUCTURE.md
 │
 ├── README.md                      ← Root-level placeholder README
