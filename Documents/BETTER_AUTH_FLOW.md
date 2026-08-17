@@ -478,7 +478,7 @@ Currently, GitPulse implements Authentication. If you have a valid cookie, you a
 
 **Authorization** answers: *"Is this user allowed to do this specific action?"*
 (e.g., "Is Ashmit allowed to delete this GitPulse project?")
-GitPulse has not yet implemented Authorization. In the future, this will be handled by tRPC protected procedures checking user permissions against workspace databases.
+GitPulse has not yet implemented Authorization. In the future, this will be handled by Next.js Route Handlers and Server Actions checking user permissions against workspace databases.
 
 ---
 

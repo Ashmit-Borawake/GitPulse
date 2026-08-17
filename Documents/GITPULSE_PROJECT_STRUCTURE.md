@@ -1,6 +1,6 @@
 # GitPulse — Project Structure Reference
 
-> **Document status:** Current state as of the Authentication Phase implementation.
+> **Document status:** Current state as of the Authentication & Initial Setup Phase implementation.
 > This document describes what **actually exists** in the repository right now.
 > It will need to be updated when new phases (dashboard layout, data models, etc.) are implemented.
 
@@ -43,7 +43,7 @@ GitPulse/                          ← Monorepo root
 └── gitpulse/                      ← Next.js application root
     │
     ├── prisma/
-    │   └── schema.prisma          ← Prisma schema (PostgreSQL with auth models)
+    │   └── schema.prisma          ← Prisma schema (PostgreSQL with auth models + Project model)
     │
     ├── public/
     │   └── favicon.ico
@@ -61,20 +61,21 @@ GitPulse/                          ← Monorepo root
     │   │   │   └── signup/
     │   │   │       └── page.tsx   ← Signup UI (Connected to authClient)
     │   │   │
-    │   │   ├── dashboard/         ← Protected dashboard area
-    │   │   │   ├── page.tsx       ← Dashboard placeholder + session check
-    │   │   │   └── components/
-    │   │   │       └── logout-button.tsx
+    │   │   ├── (protected)/       ← Protected area layout group
+    │   │   │   ├── layout.tsx     ← Dashboard layout (AppSidebar + Topbar) + Session check
+    │   │   │   ├── QA/
+    │   │   │   │   └── page.tsx   ← QA Page placeholder
+    │   │   │   └── create-project/
+    │   │   │       └── page.tsx   ← Create project UI form
     │   │   │
     │   │   └── api/
-    │   │       ├── auth/
-    │   │       │   └── [...all]/
-    │   │       │       └── route.ts  ← Better Auth Next.js API handler
-    │   │       └── trpc/
-    │   │           └── [trpc]/
-    │   │               └── route.ts  ← tRPC HTTP handler
+    │   │       └── auth/
+    │   │           └── [...all]/
+    │   │               └── route.ts  ← Better Auth Next.js API handler
     │   │
     │   ├── components/
+    │   │   ├── appsidebar.tsx     ← Dashboard Sidebar component
+    │   │   ├── user-button.tsx    ← User profile / Logout component
     │   │   └── ui/                ← shadcn / Base UI component library
     │   │       ├── button.tsx
     │   │       ├── card.tsx
@@ -89,16 +90,7 @@ GitPulse/                          ← Monorepo root
     │   │   └── auth-client.ts     ← Better Auth React client instance
     │   │
     │   ├── server/
-    │   │   ├── db.ts              ← Prisma client singleton
-    │   │   └── api/
-    │   │       ├── trpc.ts        ← tRPC server initialization & procedures
-    │   │       ├── root.ts        ← Root tRPC router
-    │   │       └── routers/       ← (empty — no domain routers yet)
-    │   │
-    │   ├── trpc/
-    │   │   ├── react.tsx          ← tRPC React client + TRPCReactProvider
-    │   │   ├── server.ts          ← tRPC server-side caller for RSC
-    │   │   └── query-client.ts    ← TanStack Query client factory
+    │   │   └── db.ts              ← Prisma client singleton
     │   │
     │   └── styles/
     │       └── globals.css        ← Global styles + design tokens
@@ -132,12 +124,12 @@ The Next.js application. Everything inside here is the actual codebase.
 ---
 
 ### `prisma/`
-Holds the Prisma ORM schema. Configured for PostgreSQL and contains the Better Auth models (`user`, `session`, `account`, `verification`). The Prisma client is generated into `node_modules/@prisma/client` during `postinstall`.
+Holds the Prisma ORM schema. Configured for PostgreSQL and contains the Better Auth models (`user`, `session`, `account`, `verification`) as well as GitPulse models like `Project`. The Prisma client is generated into `node_modules/@prisma/client` during `postinstall`.
 
 ---
 
 ### `public/`
-Static assets served directly by Next.js at the root URL. Currently contains only `favicon.ico`.
+Static assets served directly by Next.js at the root URL. Currently contains `favicon.ico` and `createProject.png`.
 
 ---
 
@@ -149,23 +141,19 @@ Next.js **App Router** directory. Every folder with a `page.tsx` inside it becom
 | `app/` root | `/` | Placeholder page |
 | `app/auth/login/` | `/auth/login` | ✅ Fully functional (Email + OAuth) |
 | `app/auth/signup/` | `/auth/signup` | ✅ Fully functional (Email + password) |
-| `app/dashboard/` | `/dashboard` | ✅ Protected route. Temporary proof-of-auth page. |
+| `app/(protected)/` | `/QA`, `/create-project` | ✅ Protected layout group with Sidebar |
 | `app/api/auth/[...all]/` | `/api/auth/*` | ✅ Better Auth API handler active |
-| `app/api/trpc/[trpc]/` | `/api/trpc/*` | ✅ tRPC HTTP handler active |
 
 ---
 
 ### `src/app/auth/`
-Contains the authentication UI pages (`login`, `signup`). They are fully connected to `authClient` and redirect to `/dashboard` upon successful authentication.
+Contains the authentication UI pages (`login`, `signup`). They are fully connected to `authClient` and redirect to protected pages upon successful authentication.
 
 ---
 
-### `src/components/ui/`
-Holds all **shadcn** component files. These are copied into the project (not imported from a package) so they can be customised. They are built on top of **Base UI** primitives from `@base-ui/react`.
-
-Currently installed components: Button, Card, Checkbox, Input, Label, Separator.
-
-> These components use shadcn's default styling as a base. The GitPulse Design System tokens (`--gp-*`) are applied on top via inline styles and Tailwind utilities in individual pages, without modifying the component source files.
+### `src/components/`
+Holds shared application components (like `AppSidebar` and `UserButton`).
+The `ui/` subfolder holds all **shadcn** component files built on top of **Base UI**.
 
 ---
 
@@ -178,21 +166,8 @@ Utility functions and singleton instances shared across the application.
 ---
 
 ### `src/server/`
-All server-side code that **must not run in the browser**. The `server-only` package is used where needed to enforce this boundary.
-
+All server-side code that **must not run in the browser**.
 - `db.ts` — Prisma client singleton (instantiated once per server process, reused in dev to avoid connection pooling issues). Also used by Better Auth via the `prismaAdapter`.
-- `api/trpc.ts` — tRPC initialization: context factory, router/procedure builders, timing middleware.
-- `api/root.ts` — Root tRPC router that composes all domain sub-routers.
-- `api/routers/` — Empty; individual feature routers go here (e.g., `post.ts`, `user.ts`).
-
----
-
-### `src/trpc/`
-Client-side and RSC-side tRPC wrappers. This directory is the **bridge** between the tRPC server and the UI.
-
-- `react.tsx` — Creates the typed `api` hook used in Client Components; exports `TRPCReactProvider`
-- `server.ts` — Creates a typed `api` caller used in React Server Components (RSC); exports `HydrateClient`
-- `query-client.ts` — Factory for TanStack Query's `QueryClient` with SuperJSON serialization and SSR-safe dehydration settings
 
 ---
 
@@ -207,40 +182,26 @@ Contains `globals.css` — the single global stylesheet. This is where Tailwind 
 
 | File | Purpose |
 |------|---------|
-| `src/app/layout.tsx` | Root Next.js layout. Loads DM Sans and Geist fonts via `next/font/google`. Wraps the app in `TRPCReactProvider`. |
-| `src/app/page.tsx` | Home page at `/`. Currently a placeholder. |
-| `src/app/auth/login/page.tsx` | Login page UI at `/auth/login`. Connected to Better Auth `authClient.signIn`. Supports Email+Password, Google, and GitHub OAuth. |
-| `src/app/auth/signup/page.tsx` | Signup page UI at `/auth/signup`. Connected to Better Auth `authClient.signUp`. |
-| `src/app/dashboard/page.tsx` | Protected dashboard Server Component. Validates session server-side using `auth.api.getSession({ headers })`. |
-| `src/app/api/auth/[...all]/route.ts` | The Better Auth API route handler. Automatically manages all auth requests (signup, signin, signout, OAuth callbacks, session verification). |
-| `src/app/api/trpc/[trpc]/route.ts` | The HTTP handler for the tRPC router. |
-| `src/env.js` | Type-safe environment variable validation using `@t3-oss/env-nextjs` and Zod. Strict server-only rules (no `NEXT_PUBLIC_` variables) to prevent accidental secret leakage. |
+| `src/app/layout.tsx` | Root Next.js layout. Loads Geist and Space Grotesk fonts via `next/font/google`. |
+| `src/app/(protected)/layout.tsx` | Protected dashboard layout containing Sidebar and Session check. |
+| `src/app/(protected)/create-project/page.tsx` | UI for creating a new project with form integration. |
+| `src/app/api/auth/[...all]/route.ts` | The Better Auth API route handler. Automatically manages all auth requests. |
+| `src/env.js` | Type-safe environment variable validation using `@t3-oss/env-nextjs` and Zod. |
 | `src/server/db.ts` | Exports the `db` Prisma client singleton. |
-| `src/lib/auth.ts` | Better Auth server configuration. Defines the database adapter, OAuth credentials, and base URL. |
-| `src/lib/auth-client.ts` | Better Auth React client. Auto-detects the origin to route API calls accurately in development and production. |
+| `src/lib/auth.ts` | Better Auth server configuration. |
+| `src/lib/auth-client.ts` | Better Auth React client. |
 
 ### Prisma & database
 
 | File | Purpose |
 |------|---------|
-| `prisma/schema.prisma` | Defines the database schema. Contains `User`, `Session`, `Account`, and `Verification` models generated by Better Auth. |
-| `start-database.sh` | Shell script to start a local PostgreSQL instance via Docker. |
-
-### Configuration files
-
-| File | Purpose |
-|------|---------|
-| `package.json` | Project dependencies, scripts, and metadata. Notice the `dev` script is pinned to `-p 3001` to match OAuth callback configurations. |
-| `tsconfig.json` | TypeScript compiler options. Strict mode enabled. Path alias `@/*` → `./src/*`. |
-| `next.config.js` | Next.js configuration. Imports `src/env.js` at startup to trigger env validation. |
-| `components.json` | shadcn CLI configuration. Specifies style, RSC mode, icon library (Lucide), Tailwind CSS v4, and component path aliases. |
-| `.env.example` | Template for the `.env` file. Includes documentation for Better Auth and OAuth variables. |
+| `prisma/schema.prisma` | Defines the database schema. Contains `User`, `Project`, `Session`, `Account`, and `Verification` models. |
 
 ---
 
 ## 4. Architecture Overview
 
-```
+```text
 Browser / Client
        │
        ├── authClient (src/lib/auth-client.ts)
@@ -264,10 +225,10 @@ Browser / Client
 Next.js App Router (src/app/)
        │
        ├── Server Components (RSC) → check auth via `auth.api.getSession()`
-       │       └── call tRPC via src/trpc/server.ts (no HTTP round-trip)
+       │       └── direct access to Prisma or server actions
        │
        └── Client Components ("use client") → hydrate in browser
-               └── call tRPC via src/trpc/react.tsx hooks (HTTP to /api/trpc)
+               └── call Next.js Route Handlers via `fetch()`
 ```
 
 ---
@@ -276,59 +237,35 @@ Next.js App Router (src/app/)
 
 ### Authentication: Better Auth
 GitPulse uses [Better Auth](https://better-auth.com/) for authentication. It manages user sessions using **HTTP-only cookies** and database session tables.
-- **NO JWTs** are used or configured.
-- **OAuth Providers:** Google and GitHub are configured and active.
-- **Database Adapter:** Uses the bundled Prisma adapter (`better-auth/adapters/prisma`).
-- **Server Instance:** `src/lib/auth.ts`
-- **Client Instance:** `src/lib/auth-client.ts`
 
 ### Next.js 15 (App Router)
-The full-stack React framework. Handles routing, server-side rendering, API routes, and static asset serving. GitPulse uses the **App Router** (the `src/app/` directory convention), not the older Pages Router.
+The full-stack React framework. Handles routing, server-side rendering, API routes, and static asset serving.
 
 ### React 19
 The UI library. Next.js renders React components on the server (RSC) and hydrates them in the browser.
 
-### TypeScript 5
-Strict TypeScript is enforced throughout. The `@/*` path alias maps to `src/`, so `import { cn } from "@/lib/utils"` works from any file.
-
 ### Tailwind CSS v4
-Utility-first CSS framework. Configured via `postcss.config.js` (the v4 PostCSS approach — no `tailwind.config.ts` file is needed). All class names are applied inline in JSX.
+Utility-first CSS framework. Configured via `postcss.config.js`.
 
 ### shadcn / Base UI
-shadcn provides pre-built accessible UI components copied directly into `src/components/ui/`. In this project, shadcn uses **Base UI** (`@base-ui/react`) as its headless primitive layer instead of Radix UI.
-
-### tRPC 11 & TanStack Query 5
-Type-safe API layer. Defines API procedures on the server (in `src/server/api/`) and calls them from the client with full TypeScript inference.
+Accessible UI components copied directly into `src/components/ui/`.
 
 ### Prisma 6
-ORM for PostgreSQL. The schema lives in `prisma/schema.prisma`. The Prisma client is accessed via `src/server/db.ts`. Contains Better Auth models (`user`, `session`, `account`, `verification`).
-
-### Zod
-Schema validation library. Used in `src/env.js` to ensure required environment variables are present and correctly typed at startup.
+ORM for PostgreSQL. The schema lives in `prisma/schema.prisma`.
 
 ---
 
 ## 6. UI Architecture
 
-```
+```text
 src/styles/globals.css
        │
        ├── Tailwind CSS v4 imports
        ├── shadcn base theme variables (--background, --foreground, --primary, etc.)
        └── GitPulse Design System tokens (--gp-bg-base, --gp-text-primary, etc.)
-               │
-               ▼
-src/components/ui/
-       │
-       └── Reusable shadcn primitives (Button, Card, Input, Label, Checkbox, Separator)
-               │
-               ▼
-src/app/ (pages)
-       │
-       └── Page-level UI assembles primitives + custom layout
 ```
 
-> **Design System priority rule:** The GitPulse Design System (`--gp-*` tokens) take priority over default shadcn styling for custom page layouts.
+> **Design System priority rule:** The GitPulse Design System (`--gp-*` tokens) and `Space Grotesk` global font takes priority over default shadcn styling for custom page layouts.
 
 ---
 
@@ -340,33 +277,25 @@ Authentication is **fully implemented and active** using Better Auth.
 |---------|--------|------------------------|
 | Email/Password Login | ✅ Active | Uses `authClient.signIn.email()` |
 | Email/Password Signup | ✅ Active | Uses `authClient.signUp.email()` |
-| Session management | ✅ Active | Database sessions + HTTP-only cookies |
 | Google OAuth | ✅ Active | Uses `authClient.signIn.social({ provider: "google" })` |
 | GitHub OAuth | ✅ Active | Uses `authClient.signIn.social({ provider: "github" })` |
-| Implicit Account Linking | ✅ Active | Configured `requireLocalEmailVerified: false` in `auth.ts` to allow OAuth linking without local email verification |
-| Custom Email Validation | ✅ Active | Intercepts `/api/auth/sign-in/email` in `route.ts` to return custom 400 error for unregistered emails |
-| Session Loading UI | ✅ Active | Displays `lucide-react` `<Loader2 />` spinner on auth pages during session verification |
-| Protected Routes | ✅ Active | `/dashboard` uses `auth.api.getSession()` Server Component check |
-| Logout | ✅ Active | `<LogoutButton>` calls `authClient.signOut()` |
+| Protected Routes | ✅ Active | `(protected)` layout uses `auth.api.getSession()` |
+| Logout | ✅ Active | `<UserButton>` calls `authClient.signOut()` |
 
 ---
 
 ## 8. Database — Current Status
 
-The database contains the core Better Auth models:
+The database contains the core Better Auth models + standard GitPulse models:
 
-- `user` — User profile data (name, email, etc.)
-- `session` — Active authentication sessions tied to HTTP-only cookies
-- `account` — OAuth provider identities (Google, GitHub linked to Users)
-- `verification` — Email verification tokens
-
-The database is in sync with the Prisma schema.
+- `User`, `Session`, `Account`, `Verification` — Better Auth internal tables
+- `Project` — Custom GitPulse table for workspace projects
 
 ---
 
 ## 9. Configuration Files
 
-See section 3 for details. The `dev` script in `package.json` is explicitly pinned to port 3001 (`next dev --turbo -p 3001`) to match the `BETTER_AUTH_URL` and OAuth callback configurations registered with Google and GitHub.
+See section 3 for details. The `dev` script in `package.json` is explicitly pinned to port 3001.
 
 ---
 
@@ -377,10 +306,8 @@ The following environment variables are strictly validated by `src/env.js` at ru
 | Variable | Purpose |
 |----------|---------|
 | `DATABASE_URL` | PostgreSQL connection string (pooled). |
-| `DIRECT_URL` | Direct PostgreSQL connection string (for migrations). |
-| `NODE_ENV` | `development`, `test`, or `production`. |
-| `BETTER_AUTH_SECRET` | High-entropy secret (minimum 32 chars) for encrypting cookies and tokens. |
-| `BETTER_AUTH_URL` | Base URL of the application (e.g. `http://localhost:3001`). Used for absolute redirect generation. |
+| `BETTER_AUTH_SECRET` | High-entropy secret for encrypting cookies. |
+| `BETTER_AUTH_URL` | Base URL of the application. |
 | `GOOGLE_CLIENT_ID/SECRET` | OAuth credentials for Google Sign-In. |
 | `GITHUB_CLIENT_ID/SECRET` | OAuth credentials for GitHub Sign-In. |
 
@@ -388,8 +315,5 @@ The following environment variables are strictly validated by `src/env.js` at ru
 
 ## 11. Planned Next Steps
 
-Now that the core Authentication infrastructure is complete, the next logical phases are:
-
-1. **Dashboard Architecture** — Building out the real dashboard layout (sidebar, header, content area) replacing the temporary proof-of-auth dashboard.
-2. **tRPC Protected Procedures** — Extending `src/server/api/trpc.ts` with a `protectedProcedure` middleware that verifies the Better Auth session before allowing database access.
-3. **Domain Data Models** — Adding GitPulse-specific Prisma models (Workspaces, Projects, Issues) linked to the existing `user` model.
+1. **Dashboard Data Integration** — Connect the `/create-project` form to a Server Action or REST endpoint to insert into the `Project` database model.
+2. **Dashboard Overview UI** — Building out the real dashboard data tables replacing placeholders.
