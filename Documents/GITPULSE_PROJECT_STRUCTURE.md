@@ -343,6 +343,9 @@ Authentication is **fully implemented and active** using Better Auth.
 | Session management | ✅ Active | Database sessions + HTTP-only cookies |
 | Google OAuth | ✅ Active | Uses `authClient.signIn.social({ provider: "google" })` |
 | GitHub OAuth | ✅ Active | Uses `authClient.signIn.social({ provider: "github" })` |
+| Implicit Account Linking | ✅ Active | Configured `requireLocalEmailVerified: false` in `auth.ts` to allow OAuth linking without local email verification |
+| Custom Email Validation | ✅ Active | Intercepts `/api/auth/sign-in/email` in `route.ts` to return custom 400 error for unregistered emails |
+| Session Loading UI | ✅ Active | Displays `lucide-react` `<Loader2 />` spinner on auth pages during session verification |
 | Protected Routes | ✅ Active | `/dashboard` uses `auth.api.getSession()` Server Component check |
 | Logout | ✅ Active | `<LogoutButton>` calls `authClient.signOut()` |
 

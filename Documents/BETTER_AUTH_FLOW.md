@@ -189,17 +189,26 @@ Better Auth  →  Prisma Adapter  →  Prisma Client  →  PostgreSQL
 
 1. User opens `/auth/login`. (If they are already logged in, the `useSession` hook will detect their session and redirect them to `/dashboard`).
 2. User enters Email and Password and clicks Login.
-3. The form calls `authClient.signIn.email(...)`.
-4. `authClient` sends a `POST` request to `/api/auth/sign-in/email`.
-5. The API route passes the request to Better Auth.
-6. Better Auth looks up the `User` by email in PostgreSQL.
-   * *If not found:* Returns an error.
-7. Better Auth retrieves the hashed password from the database and verifies it against the provided password.
-   * *If incorrect:* Returns an error.
-8. Better Auth creates a new `Session` record.
-9. Better Auth returns the HTTP-only cookie.
-10. The browser stores the cookie.
-11. GitPulse redirects the user to `/dashboard`.
+3. The form runs regex client-side validation on the email to ensure it's properly formatted.
+4. The form calls `authClient.signIn.email(...)`.
+5. `authClient` sends a `POST` request to `/api/auth/sign-in/email`.
+6. **Custom API Interception:** The API route `src/app/api/auth/[...all]/route.ts` intercepts the request, reads the email, and queries the database via Prisma to see if the user exists. 
+   * *If the user does NOT exist:* The API route immediately returns a custom 400 error (`{ message: "Email not registered. Please sign up." }`) without bothering Better Auth. This avoids Better Auth's default anti-enumeration security fallback.
+7. The API route passes the request to Better Auth.
+8. Better Auth retrieves the hashed password from the database and verifies it against the provided password.
+   * *If incorrect:* Returns the default `"Invalid email or password"` error.
+9. Better Auth creates a new `Session` record.
+10. Better Auth returns the HTTP-only cookie.
+11. The browser stores the cookie.
+12. GitPulse redirects the user to `/dashboard`.
+
+---
+
+## 8.5. Loading States & UX
+
+GitPulse provides a smooth UX during authentication by utilizing `lucide-react` loaders.
+- **Session Loading:** While `useSession()` checks the browser's cookie state on `/auth/login` or `/auth/signup`, the UI is replaced by a full-screen spinning `<Loader2 />` to prevent a flash of the login form before redirecting a logged-in user.
+- **Action Loading:** Buttons disable themselves and display loading states during active authentication API calls.
 
 ---
 
@@ -271,6 +280,12 @@ If he then clicks "Sign in with GitHub", Better Auth links that too.
 Now he has 1 `User` record, and 2 `Account` records (Google, GitHub).
 
 He can log in via any of those 3 methods, and he will always end up logged into the exact same GitPulse `User`.
+
+### Implicit Account Linking & Security
+By default, Better Auth prevents an OAuth provider (like Google) from linking to an existing `User` if the local `User` hasn't verified their email address. This prevents a hacker from creating an unverified account with your email and hijacking your Google login later. 
+Since GitPulse currently does not have an email verification flow, we explicitly configured `accountLinking` in `src/lib/auth.ts`:
+- `enabled: true` and `trustedProviders: ["google", "github"]`: Allows linking.
+- `requireLocalEmailVerified: false`: Bypasses the strict local email verification check so that OAuth providers can successfully link to local accounts during this phase of development.
 
 ---
 
