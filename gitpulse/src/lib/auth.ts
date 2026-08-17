@@ -36,6 +36,15 @@ export const auth = betterAuth({
     updateAge: 60 * 60 * 24, // update the session in the DB every 1 day
   },
 
+  // ── Account ──────────────────────────────────────────────────────────────────
+  account: {
+    accountLinking: {
+      enabled: true,
+      trustedProviders: ["google", "github"],
+      requireLocalEmailVerified: false,
+    },
+  },
+
   // ── Email & Password ─────────────────────────────────────────────────────────
   emailAndPassword: {
     enabled: true,

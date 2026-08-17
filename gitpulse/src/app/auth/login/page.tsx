@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -82,8 +82,12 @@ export default function LoginPage() {
     e.preventDefault();
     setError(null);
 
-    if (!email || !password) {
-      setError("Please enter your email and password.");
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+    if (!password) {
+      setError("Please enter your password.");
       return;
     }
 
@@ -150,6 +154,7 @@ export default function LoginPage() {
         className="flex min-h-svh items-center justify-center px-4 py-12"
         style={{ backgroundColor: "var(--gp-bg-base)" }}
       >
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
       </div>
     );
   }

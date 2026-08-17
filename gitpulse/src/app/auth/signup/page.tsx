@@ -121,8 +121,8 @@ export default function SignupPage() {
       setError("Please enter your name.");
       return;
     }
-    if (!email) {
-      setError("Please enter your email address.");
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setError("Please enter a valid email address.");
       return;
     }
     if (password.length < 8) {
