@@ -367,7 +367,8 @@ File: `src/app/dashboard/components/logout-button.tsx`
 5. Better Auth **deletes the Session record from PostgreSQL**.
 6. Better Auth sends a response telling the browser to **clear the HTTP-only cookie**.
 7. `authClient` resolves successfully.
-8. GitPulse executes `router.push("/auth/login")`.
+8. GitPulse explicitly clears the application cache from `localStorage` (e.g. `gitpulse-projects` and `gitpulse-project-id`) to ensure no stale data is left behind on a shared device.
+9. GitPulse executes `router.push("/auth/login")`.
 9. The user is now on the login page.
 10. If they try to press the "Back" button to go to `/dashboard`, the server will check for the cookie, find it missing, and immediately redirect them back to `/auth/login`.
 

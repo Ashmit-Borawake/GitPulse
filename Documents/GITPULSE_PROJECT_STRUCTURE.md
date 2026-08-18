@@ -76,6 +76,7 @@ GitPulse/                          ← Monorepo root
     │   ├── components/
     │   │   ├── appsidebar.tsx     ← Dashboard Sidebar component
     │   │   ├── user-button.tsx    ← User profile / Logout component
+    │   │   ├── providers.tsx      ← Client providers (React Query)
     │   │   └── ui/                ← shadcn / Base UI component library
     │   │       ├── button.tsx
     │   │       ├── card.tsx
@@ -83,6 +84,11 @@ GitPulse/                          ← Monorepo root
     │   │       ├── input.tsx
     │   │       ├── label.tsx
     │   │       └── separator.tsx
+    │   │
+    │   ├── hooks/
+    │   │   ├── use-mobile.ts      ← shadcn mobile hook
+    │   │   ├── use-project.ts     ← React Query hook for projects
+    │   │   └── use-refetch.ts     ← React Query invalidation hook
     │   │
     │   ├── lib/
     │   │   ├── utils.ts           ← cn() utility (clsx + tailwind-merge)
@@ -184,6 +190,7 @@ Contains `globals.css` — the single global stylesheet. This is where Tailwind 
 |------|---------|
 | `src/app/layout.tsx` | Root Next.js layout. Loads Geist and Space Grotesk fonts via `next/font/google`. |
 | `src/app/(protected)/layout.tsx` | Protected dashboard layout containing Sidebar and Session check. |
+| `src/components/providers.tsx` | TanStack React Query global provider wrapper. |
 | `src/app/(protected)/create-project/page.tsx` | UI for creating a new project with form integration. |
 | `src/app/api/auth/[...all]/route.ts` | The Better Auth API route handler. Automatically manages all auth requests. |
 | `src/env.js` | Type-safe environment variable validation using `@t3-oss/env-nextjs` and Zod. |
@@ -247,6 +254,9 @@ The UI library. Next.js renders React components on the server (RSC) and hydrate
 ### Tailwind CSS v4
 Utility-first CSS framework. Configured via `postcss.config.js`.
 
+### TanStack React Query
+Used for client-side data fetching, caching, and state synchronization (e.g., fetching user projects).
+
 ### shadcn / Base UI
 Accessible UI components copied directly into `src/components/ui/`.
 
@@ -290,6 +300,7 @@ The database contains the core Better Auth models + standard GitPulse models:
 
 - `User`, `Session`, `Account`, `Verification` — Better Auth internal tables
 - `Project` — Custom GitPulse table for workspace projects
+- `UserToProject` — Many-to-many junction table linking Users to Projects
 
 ---
 
@@ -315,5 +326,5 @@ The following environment variables are strictly validated by `src/env.js` at ru
 
 ## 11. Planned Next Steps
 
-1. **Dashboard Data Integration** — Connect the `/create-project` form to a Server Action or REST endpoint to insert into the `Project` database model.
+1. **Dashboard Data Integration** — ✅ Connect the `/create-project` form to a REST endpoint to insert into the `Project` database model. (Implemented using Next.js Route Handlers and TanStack React Query for live sidebar updates).
 2. **Dashboard Overview UI** — Building out the real dashboard data tables replacing placeholders.
