@@ -12,6 +12,8 @@ export function UserButton() {
     await signOut({
       fetchOptions: {
         onSuccess: () => {
+          localStorage.removeItem("gitpulse-projects")
+          localStorage.removeItem("gitpulse-project-id")
           router.push("/auth/login")
         },
       },

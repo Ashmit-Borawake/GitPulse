@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { authClient } from "@/lib/auth-client";
+import { toast } from "sonner";
 
 // ── Inline SVGs for OAuth brand icons ──────────────────────────────────────
 
@@ -65,7 +66,6 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
 
   // ── UI state ────────────────────────────────────────────────────────────────
-  const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [isGithubLoading, setIsGithubLoading] = useState(false);
@@ -73,14 +73,13 @@ export default function LoginPage() {
   // ── Email / password submit ──────────────────────────────────────────────────
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setError(null);
 
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setError("Please enter a valid email address.");
+      toast.error("Please enter a valid email address.");
       return;
     }
     if (!password) {
-      setError("Please enter your password.");
+      toast.error("Please enter your password.");
       return;
     }
 
@@ -92,14 +91,16 @@ export default function LoginPage() {
       });
 
       if (result.error) {
-        setError(result.error.message ?? "Invalid email or password.");
+        toast.error(result.error.message ?? "Invalid email or password.");
         return;
       }
 
-      // Session cookie set by Better Auth — redirect to dashboard
+      // Session cookie set by Better Auth
+      toast.success("Logged in successfully!");
       router.push("/dashboard");
-    } catch {
-      setError("Something went wrong. Please try again.");
+    } catch (error) {
+      console.error("Login Error:", error);
+      toast.error("Something went wrong. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -108,7 +109,6 @@ export default function LoginPage() {
   // ── Google OAuth ─────────────────────────────────────────────────────────────
   async function handleGoogleSignIn() {
     if (isGoogleLoading) return;
-    setError(null);
     setIsGoogleLoading(true);
     try {
       await authClient.signIn.social({
@@ -116,8 +116,9 @@ export default function LoginPage() {
         callbackURL: "/dashboard",
       });
       // Better Auth will redirect — nothing else needed here
-    } catch {
-      setError("Google sign-in failed. Please try again.");
+    } catch (error) {
+      console.error("Google Sign-In Error:", error);
+      toast.error("Google sign-in failed. Please try again.");
       setIsGoogleLoading(false);
     }
   }
@@ -125,7 +126,6 @@ export default function LoginPage() {
   // ── GitHub OAuth ─────────────────────────────────────────────────────────────
   async function handleGithubSignIn() {
     if (isGithubLoading) return;
-    setError(null);
     setIsGithubLoading(true);
     try {
       await authClient.signIn.social({
@@ -133,8 +133,9 @@ export default function LoginPage() {
         callbackURL: "/dashboard",
       });
       // Better Auth will redirect — nothing else needed here
-    } catch {
-      setError("GitHub sign-in failed. Please try again.");
+    } catch (error) {
+      console.error("GitHub Sign-In Error:", error);
+      toast.error("GitHub sign-in failed. Please try again.");
       setIsGithubLoading(false);
     }
   }
@@ -170,21 +171,6 @@ export default function LoginPage() {
             Enter your email below to login to your account
           </p>
         </div>
-
-        {/* Error message */}
-        {error && (
-          <div
-            className="mb-4 rounded-lg px-4 py-3 text-[0.875rem]"
-            role="alert"
-            style={{
-              backgroundColor: "var(--gp-semantic-error-subtle, #fef2f2)",
-              color: "var(--gp-semantic-error, #dc2626)",
-              border: "1px solid var(--gp-semantic-error-border, #fecaca)",
-            }}
-          >
-            {error}
-          </div>
-        )}
 
         {/* Form */}
         <form className="flex flex-col gap-5" onSubmit={handleSubmit} noValidate>

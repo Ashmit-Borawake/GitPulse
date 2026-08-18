@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { authClient, useSession } from "@/lib/auth-client";
+import { toast } from "sonner";
 
 // ── Password visibility toggle button ──────────────────────────────────────
 // Small, self-contained — only used inside this file.
@@ -109,29 +110,27 @@ export default function SignupPage() {
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   // ── UI state ────────────────────────────────────────────────────────────────
-  const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
   // ── Submit handler ───────────────────────────────────────────────────────────
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setError(null);
 
     // Client-side validation
     if (!firstName.trim() || !lastName.trim()) {
-      setError("Please enter your full name.");
+      toast.error("Please enter your full name.");
       return;
     }
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      setError("Please enter a valid email address.");
+      toast.error("Please enter a valid email address.");
       return;
     }
     if (password.length < 8) {
-      setError("Password must be at least 8 characters.");
+      toast.error("Password must be at least 8 characters.");
       return;
     }
     if (password !== confirmPassword) {
-      setError("Passwords do not match.");
+      toast.error("Passwords do not match.");
       return;
     }
 
@@ -149,18 +148,19 @@ export default function SignupPage() {
         // Map common Better Auth errors to user-friendly messages
         const msg = result.error.message ?? "";
         if (msg.toLowerCase().includes("email")) {
-          setError("An account with that email already exists.");
+          toast.error("An account with that email already exists.");
         } else {
-          setError(msg || "Failed to create account. Please try again.");
+          toast.error(msg || "Failed to create account. Please try again.");
         }
         return;
       }
 
       // Better Auth has created the user, account, and session cookie.
-      // Redirect to dashboard.
+      toast.success("Account created successfully!");
       router.push("/dashboard");
-    } catch {
-      setError("Something went wrong. Please try again.");
+    } catch (error) {
+      console.error("Signup Error:", error);
+      toast.error("Something went wrong. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -204,21 +204,6 @@ export default function SignupPage() {
             Enter your information to create an account
           </p>
         </div>
-
-        {/* Error message */}
-        {error && (
-          <div
-            className="mb-4 rounded-lg px-4 py-3 text-[0.875rem]"
-            role="alert"
-            style={{
-              backgroundColor: "var(--gp-semantic-error-subtle, #fef2f2)",
-              color: "var(--gp-semantic-error, #dc2626)",
-              border: "1px solid var(--gp-semantic-error-border, #fecaca)",
-            }}
-          >
-            {error}
-          </div>
-        )}
 
         {/* Form */}
         <form
