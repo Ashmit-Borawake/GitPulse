@@ -16,7 +16,7 @@ model User {
   name          String
   email         String
   emailVerified Boolean   @default(false)
-  imageUrl      String?
+  image         String?
   firstName     String?
   lastName      String?
   credits       Int       @default(150)
@@ -27,7 +27,6 @@ model User {
   userToProjects UserToProject[]
 
   @@unique([email])
-  @@map("user")
 }
 
 model Session {
@@ -43,7 +42,6 @@ model Session {
 
   @@unique([token])
   @@index([userId])
-  @@map("session")
 }
 
 model Account {
@@ -59,11 +57,11 @@ model Account {
   refreshTokenExpiresAt DateTime?
   scope                 String?
   password              String?
+  issuer                String?
   createdAt             DateTime  @default(now())
   updatedAt             DateTime  @updatedAt
 
   @@index([userId])
-  @@map("account")
 }
 
 model Verification {
@@ -75,7 +73,6 @@ model Verification {
   updatedAt  DateTime @updatedAt
 
   @@index([identifier])
-  @@map("verification")
 }
 
 model Project {
@@ -89,6 +86,7 @@ model Project {
 
   deletedAt DateTime?
   userToProjects UserToProject[]
+  commits Commit[]
 }
 
 model UserToProject {
@@ -103,4 +101,22 @@ model UserToProject {
   project   Project  @relation(fields: [projectId], references: [id])
 
   @@unique([userId, projectId])
+}
+
+model Commit {
+  id                 String   @id @default(cuid())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  projectId          String
+  project            Project  @relation(fields: [projectId], references: [id])
+
+  commitMessage      String
+  commitHash         String
+  commitAuthorName   String
+  commitAuthorAvatar String
+  commitDate         DateTime
+  
+  // ai summary
+  summary            String
 }

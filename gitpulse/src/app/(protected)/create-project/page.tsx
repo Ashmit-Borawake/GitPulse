@@ -42,14 +42,14 @@ const CreatePage = () => {
   }
 
   return (
-    <div className="flex h-full items-center justify-center gap-12">
+    <div className="flex h-full flex-col sm:flex-row items-center justify-center gap-6 sm:gap-12 p-4">
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src="/createProject.png"
-        className="h-56 w-auto"
+        className="h-40 sm:h-56 w-auto hidden sm:block"
         alt="create project"
       />
-      <div>
+      <div className="w-full sm:w-auto max-w-md">
         <div>
           <h1 className="text-2xl font-semibold">
             Link your GitHub Repository

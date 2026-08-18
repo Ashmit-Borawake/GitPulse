@@ -7,6 +7,7 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { useProject } from "@/hooks/use-project"
+import { toast } from "sonner"
 
 const items = [
   {
@@ -20,8 +21,8 @@ const items = [
     icon: Bot,
   },
   {
-    title: "Meetings",
-    url: "/meetings",
+    title: "Workspace",
+    url: "/workspace",
     icon: Presentation,
   },
   {
@@ -34,7 +35,9 @@ const items = [
 export function AppSidebar() {
   const pathname = usePathname()
   const { open, toggleSidebar } = useSidebar()
-  const { projects, projectId, setProjectId } = useProject()
+  const { projects, projectId, setProjectId, isLoading } = useProject()
+
+  const hasNoProjects = !isLoading && projects && projects.length === 0;
   return (
     <Sidebar collapsible="icon" variant="floating">
       <SidebarHeader>
@@ -73,13 +76,23 @@ export function AppSidebar() {
           <SidebarGroupContent>
             <SidebarMenu>
               {items.map(item => {
+                const isProjectRequired = ["/dashboard", "/QA", "/workspace"].includes(item.url);
+                const isDisabled = isProjectRequired && hasNoProjects;
+
                 return (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton 
                       render={
-                        <Link href={item.url} className={cn({
-                          '!bg-primary !text-white': pathname === item.url
-                        }, 'list-none')} />
+                        isDisabled ? (
+                          <div 
+                            className="cursor-pointer list-none" 
+                            onClick={() => toast.error("Please Create Project First !")}
+                          />
+                        ) : (
+                          <Link href={item.url} className={cn({
+                            '!bg-primary !text-white': pathname === item.url
+                          }, 'list-none')} />
+                        )
                       }
                     >
                       <item.icon />

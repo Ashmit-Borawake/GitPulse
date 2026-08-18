@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, ArrowLeft } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -144,9 +144,17 @@ export default function LoginPage() {
 
   return (
     <div
-      className="flex min-h-svh items-center justify-center px-4 py-12"
+      className="relative flex min-h-svh items-center justify-center px-4 py-12"
       style={{ backgroundColor: "var(--gp-bg-base)" }}
     >
+      <Link 
+        href="/" 
+        className="absolute left-4 top-4 md:left-8 md:top-8 flex items-center gap-2 text-sm font-medium transition-colors hover:text-primary"
+        style={{ color: "var(--gp-text-secondary)" }}
+      >
+        <ArrowLeft className="size-4" />
+        Back to Home
+      </Link>
       {/* Auth Card */}
       <div
         className="w-full max-w-[400px] rounded-2xl p-8"

@@ -1,11 +1,10 @@
-import Link from "next/link";
-import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
+"use client";
 
-export default async function Home() {
-  const session = await auth.api.getSession({
-    headers: await headers(),
-  });
+import Link from "next/link";
+import { useSession } from "@/lib/auth-client";
+
+export default function Home() {
+  const { data: session, isPending } = useSession();
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center bg-gray-900 text-white">
@@ -16,8 +15,12 @@ export default async function Home() {
           <p className="text-2xl text-gray-300">
             A clean foundation for your project.
           </p>
-          <div className="mt-8 flex gap-4">
-            {session ? (
+          <div className="mt-8 flex flex-wrap justify-center gap-4">
+            {isPending ? (
+               <div className="rounded-full bg-gray-700 px-8 py-3 font-semibold text-transparent animate-pulse">
+                 Loading...
+               </div>
+            ) : session ? (
               <Link
                 href="/dashboard"
                 className="rounded-full bg-blue-600 px-8 py-3 font-semibold text-white transition hover:bg-blue-700"

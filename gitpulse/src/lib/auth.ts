@@ -47,10 +47,6 @@ export const auth = betterAuth({
         type: "string",
         required: false,
       },
-      imageUrl: {
-        type: "string",
-        required: false,
-      },
     },
   },
 
@@ -60,6 +56,7 @@ export const auth = betterAuth({
       enabled: true,
       trustedProviders: ["google", "github"],
       requireLocalEmailVerified: false,
+      updateUserInfoOnLink: true,
     },
   },
 
@@ -73,20 +70,17 @@ export const auth = betterAuth({
     google: {
       clientId: env.GOOGLE_CLIENT_ID,
       clientSecret: env.GOOGLE_CLIENT_SECRET,
-      mapProfileToUser: (profile) => ({
-        firstName: profile.given_name,
-        lastName: profile.family_name,
-        imageUrl: profile.picture,
-      }),
+      mapProfileToUser: (profile) => {
+        // console.log("GOOGLE PROFILE:", profile);
+        return {
+          firstName: profile.given_name,
+          lastName: profile.family_name,
+        };
+      },
     },
     github: {
       clientId: env.GITHUB_CLIENT_ID,
       clientSecret: env.GITHUB_CLIENT_SECRET,
-      mapProfileToUser: (profile) => ({
-        // GitHub does not provide a reliable separate first/last name
-        // We map avatar_url to our custom imageUrl field
-        imageUrl: profile.avatar_url,
-      }),
     },
   },
 });

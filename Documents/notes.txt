@@ -4,3 +4,11 @@
 
 3)
 https://github.com/AtharvaChaudharii/civic-connect
+
+4)
+# also need to change the url in client ID github , for ashmitborawake03@gmail.com email
+# also need to change the url in client ID google , for ashmitborawake33@gmail.com email
+# for prduction change this url , also do search 3001 in whole project to change it for BETTER_AUTH_URL
+
+5)make landing page, login ,signup as "use client"
+cause taking too much time to load

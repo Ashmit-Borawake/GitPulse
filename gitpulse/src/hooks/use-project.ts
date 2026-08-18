@@ -2,6 +2,7 @@ import { useLocalStorage } from 'usehooks-ts';
 import { useQuery } from '@tanstack/react-query';
 import { useEffect } from 'react';
 import axios from 'axios';
+import { useRouter, usePathname } from 'next/navigation';
 
 type Project = {
     id: string;
@@ -23,6 +24,16 @@ export const useProject = () => {
     });
 
     const [projectId, setProjectId] = useLocalStorage<string>('gitpulse-project-id', '', { initializeWithValue: false });
+    const router = useRouter();
+    const pathname = usePathname();
+
+    useEffect(() => {
+        if (!isLoading && projects && projects.length === 0) {
+            if (['/dashboard', '/QA', '/workspace'].includes(pathname)) {
+                router.push('/create-project');
+            }
+        }
+    }, [isLoading, projects, pathname, router]);
 
     useEffect(() => {
         if (projects && projects.length > 0) {
