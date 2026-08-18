@@ -1,0 +1,130 @@
+Great question! Here's what I **can't do** — perfect opportunities for your project:
+
+---
+
+## **Simple Things I Can't Do:**
+
+1. **Persistent Storage**
+   - Can't save data between conversations
+   - Can't maintain a database of analyzed repos
+   - ❌ You need: Database (PostgreSQL, MongoDB, etc.) to store commits, analysis results
+
+2. **Real-time Monitoring**
+   - Can't watch repositories for new commits automatically
+   - Can't set up webhooks or scheduled jobs
+   - ❌ You need: Cron jobs, message queues, or GitHub webhooks for continuous monitoring
+
+3. **Generate Reports/Dashboards**
+   - Can't create interactive dashboards or downloadable PDFs
+   - Can't visualize data over time
+   - ❌ You need: Frontend (React, Vue, etc.), charting libraries, PDF generation
+
+4. **Authentication for Your Users**
+   - Can't manage user accounts or login systems
+   - Can't handle multi-user access control
+   - ❌ You need: Auth system (OAuth, JWT, etc.), user management
+
+---
+
+## **Medium Complexity Things I Can't Do:**
+
+5. **Batch Processing Large Repos**
+   - Analyzing a massive repo with 100k+ commits in one go is slow for me
+   - Can't parallelize analysis across multiple commits
+   - ❌ You need: Job queues (Bull, Celery), worker processes to analyze commits in parallel
+
+6. **Custom Metrics & Rules**
+   - Can't remember or apply your custom analysis rules across sessions
+   - Can't enforce org-specific policies
+   - ❌ You need: Configuration system, rule engine, policy storage
+
+7. **Performance at Scale**
+   - I'm conversational — analyzing 1000 repos daily would be inefficient
+   - Can't cache results efficiently
+   - ❌ You need: Caching layer (Redis), optimized database queries, indexing
+
+8. **Integrate with External Tools**
+   - Can't automatically push results to Slack, Jira, GitHub Issues, etc.
+   - Can't sync with your internal tools
+   - ❌ You need: API integrations, webhooks, message formatting
+
+9. **Version Control of Analysis**
+   - Can't track how analysis results changed over time
+   - Can't compare two analyses side-by-side
+   - ❌ You need: Versioning system, diff generation, historical tracking
+
+---
+
+## **Hard Things I Can't Do:**
+
+10. **Custom Machine Learning Models**
+    - I have built-in models, but can't train models on _your specific data_
+    - Can't create predictive models (e.g., "predict code quality decline")
+    - Can't detect custom patterns unique to your organization
+    - ❌ You need: ML pipeline (TensorFlow, PyTorch), training infrastructure, labeled datasets
+
+11. **Deep Code Pattern Recognition**
+    - Can analyze code I see, but can't identify complex patterns across 1000s of commits
+    - Can't do sophisticated graph analysis of code dependencies
+    - ❌ You need: Static analysis tools (AST parsers), dependency graph builders
+
+12. **Security & Compliance Analysis**
+    - Can't automatically scan for security vulnerabilities at scale
+    - Can't track compliance violations (SOC2, HIPAA, etc.) across repos
+    - ❌ You need: Security scanning (SAST/DAST), compliance engines, policy enforcement
+
+13. **Anomaly Detection**
+    - Can't learn "normal" behavior for a repo over time
+    - Can't alert when commits deviate from patterns
+    - ❌ You need: Anomaly detection algorithms, statistical models, alert systems
+
+14. **Natural Language Insights at Scale**
+    - I can summarize commits, but can't generate insights across 10k commits efficiently
+    - Can't do sentiment analysis of commit messages across large datasets
+    - ❌ You need: NLP pipelines, batch processing, embeddings storage
+
+---
+
+## **Infrastructure I Can't Provide:**
+
+15. **Scalability**
+    - Can't handle 100+ concurrent users analyzing different repos
+    - ❌ You need: Load balancing, microservices, horizontal scaling
+
+16. **API Rate Limit Management**
+    - Can't automatically handle GitHub API rate limits smartly
+    - Can't queue requests intelligently
+    - ❌ You need: Rate limiter, request queuing, token rotation
+
+17. **Error Recovery & Retry Logic**
+    - Can't automatically retry failed API calls with exponential backoff
+    - Can't gracefully handle partial failures
+    - ❌ You need: Error handling, retry mechanisms, circuit breakers
+
+18. **Audit Logging & Compliance**
+    - Can't maintain audit logs of who analyzed what
+    - Can't prove compliance for regulatory requirements
+    - ❌ You need: Logging infrastructure, encryption, compliance tracking
+
+---
+
+## **Priority Implementation Order for Your Project:**
+
+**Phase 1 (Core):**
+
+1. Database to store commits & analysis
+2. API rate limit management
+3. Batch processing for multiple repos
+4. Basic caching layer
+
+**Phase 2 (Features):** 5. User authentication & multi-user support 6. Real-time monitoring with webhooks 7. Custom metrics/rules engine 8. Integration with Slack/GitHub issues
+
+**Phase 3 (Advanced):** 9. Custom ML models 10. Anomaly detection 11. Security scanning 12. Compliance framework
+
+**Phase 4 (Scale):** 13. Dashboard/frontend 14. Performance optimization 15. Microservices architecture 16. Audit logging
+
+---
+
+**My recommendation:** Start with **Phase 1** — once you have persistent storage and batch processing, you'll be leagues ahead of what I can do. Then add features based on what your users need most.
+
+Want help implementing any of these? I can guide you through architecture decisions or code implementation!
