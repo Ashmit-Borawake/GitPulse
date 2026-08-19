@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/server/db';
+import { pollCommits } from '@/lib/github';
 
 export async function POST(request: Request) {
     try {
@@ -42,10 +43,22 @@ export async function POST(request: Request) {
             }
         });
 
+        // Run commit polling separately so a Gemini/GitHub failure
+        // doesn't prevent the project from being created.
+        let commitSyncError: string | null = null;
+        try {
+            await pollCommits(project.id);
+        } catch (pollError) {
+            const message = pollError instanceof Error ? pollError.message : String(pollError);
+            console.error('[pollCommits] Failed to sync commits for project', project.id, ':', message);
+            commitSyncError = message;
+        }
+
         return NextResponse.json(
             {
                 success: true,
                 project,
+                ...(commitSyncError && { commitSyncError }),
             },
             { status: 201 }
         );

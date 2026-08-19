@@ -22,9 +22,19 @@ const CreatePage = () => {
   async function onSubmit(data: FormInput) {
     setIsLoading(true);
     try {
-      await axios.post("/api/project", data);
+      const res = await axios.post<{ commitSyncError?: string }>("/api/project", data);
       await refetch();
       toast.success("Project created successfully");
+
+      // Warn if commit summarisation failed (project was still saved)
+      if (res.data.commitSyncError) {
+        toast.warning(
+          "Project created, but we couldn't fetch commit summaries right now. " +
+          "This is usually a temporary issue — try again in a moment.",
+          { duration: 6000 }
+        );
+      }
+
       reset();
     } catch (error) {
       console.error("Create Project Error:", error);

@@ -1,5 +1,6 @@
 import { db } from "@/server/db";
 import { Octokit } from "octokit";
+import { aiSummariseCommits } from "./gemini";
 
 export const octokit = new Octokit();
 
@@ -78,7 +79,25 @@ export const filterUnprocessedCommits = async (
     );
 };
 
-// Orchestrates the process of fetching a project's URL, getting its commits, and filtering for new ones.
+// Fetches the raw .diff content for a single commit from GitHub.
+const fetchCommitDiff = async (
+    githubUrl: string,
+    commitHash: string
+): Promise<string> => {
+    const res = await fetch(`${githubUrl}/commit/${commitHash}.diff`, {
+        headers: { Accept: "application/vnd.github.v3.diff" },
+    });
+
+    if (!res.ok) {
+        throw new Error(
+            `Failed to fetch diff for ${commitHash}: ${res.status} ${res.statusText}`
+        );
+    }
+
+    return res.text();
+};
+
+// Orchestrates: fetch commits → filter unprocessed → fetch all diffs → ONE Gemini call → save to DB.
 export const pollCommits = async (projectId: string) => {
     const { githubUrl } = await fetchProjectGithubUrl(projectId);
 
@@ -89,10 +108,63 @@ export const pollCommits = async (projectId: string) => {
         commitHashes
     );
 
-    console.log(unprocessedCommits);
+    if (unprocessedCommits.length === 0) {
+        console.log("No new commits to process.");
+        return [];
+    }
 
-    return unprocessedCommits;
-};  
+    // Fetch each commit's diff from GitHub (multiple GitHub requests — this is fine).
+    const diffResults = await Promise.allSettled(
+        unprocessedCommits.map(async (commit) => {
+            const diff = await fetchCommitDiff(githubUrl, commit.commitHash);
+            return { commitHash: commit.commitHash, diff };
+        })
+    );
 
-// Test invocation - comment out if no valid project ID is available
-// console.log(await pollCommits('cmsyzlsk10003ds8gyecytxhe'));
+    // Keep only successfully fetched diffs; warn on failures.
+    const commitDiffs: { commitHash: string; diff: string }[] = [];
+    for (const result of diffResults) {
+        if (result.status === "fulfilled") {
+            commitDiffs.push(result.value);
+        } else {
+            console.error("Failed to fetch a commit diff:", result.reason);
+        }
+    }
+
+    if (commitDiffs.length === 0) {
+        console.error("No diffs could be fetched; skipping Gemini call.");
+        return [];
+    }
+
+    // ONE Gemini API call for the entire batch.
+    const summaries = await aiSummariseCommits(commitDiffs);
+
+    // Build a lookup map so we match by commitHash — not by array index.
+    const summaryByHash = new Map(
+        summaries.map((s) => [s.commitHash, s.summary])
+    );
+
+    // Build the DB records, only for commits that received a valid summary.
+    const records = unprocessedCommits.flatMap((commit) => {
+        const summary = summaryByHash.get(commit.commitHash);
+        if (!summary) {
+            console.warn(`No summary returned for commit ${commit.commitHash}; skipping.`);
+            return [];
+        }
+        return [
+            {
+                projectId,
+                commitHash: commit.commitHash,
+                commitMessage: commit.commitMessage,
+                commitAuthorName: commit.commitAuthorName,
+                commitAuthorAvatar: commit.commitAuthorAvatar,
+                commitDate: commit.commitDate,
+                summary,
+            },
+        ];
+    });
+
+    const commits = await db.commit.createMany({ data: records });
+
+    return commits;
+};
