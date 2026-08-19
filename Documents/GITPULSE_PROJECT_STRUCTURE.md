@@ -65,13 +65,16 @@ GitPulse/                          ← Monorepo root
     │   │   │   ├── layout.tsx     ← Dashboard layout (AppSidebar + Topbar) + Session check
     │   │   │   ├── QA/
     │   │   │   │   └── page.tsx   ← QA Page placeholder
+    │   │   │   ├── dashboard/
+    │   │   │   │   ├── page.tsx          ← Dashboard main page
+    │   │   │   │   └── commit-log.tsx    ← UI component displaying AI summarized commits
     │   │   │   └── create-project/
     │   │   │       └── page.tsx   ← Create project UI form
     │   │   │
     │   │   └── api/
-    │   │       └── auth/
-    │   │           └── [...all]/
-    │   │               └── route.ts  ← Better Auth Next.js API handler
+    │   │       ├── auth/[...all]/route.ts  ← Better Auth Next.js API handler
+    │   │       ├── project/route.ts        ← Project creation and listing API
+    │   │       └── commits/route.ts        ← Commit listing and GitHub polling API
     │   │
     │   ├── components/
     │   │   ├── appsidebar.tsx     ← Dashboard Sidebar component
@@ -93,7 +96,9 @@ GitPulse/                          ← Monorepo root
     │   ├── lib/
     │   │   ├── utils.ts           ← cn() utility (clsx + tailwind-merge)
     │   │   ├── auth.ts            ← Better Auth server instance
-    │   │   └── auth-client.ts     ← Better Auth React client instance
+    │   │   ├── auth-client.ts     ← Better Auth React client instance
+    │   │   ├── github.ts          ← Octokit GitHub API integration
+    │   │   └── gemini.ts          ← Google GenAI API integration
     │   │
     │   ├── server/
     │   │   └── db.ts              ← Prisma client singleton
@@ -168,6 +173,8 @@ Utility functions and singleton instances shared across the application.
 - `utils.ts` — UI styling utilities.
 - `auth.ts` — **Server-side** Better Auth configuration and instance.
 - `auth-client.ts` — **Client-side** Better Auth configuration and instance.
+- `github.ts` — Octokit integration for fetching un-processed repository commits.
+- `gemini.ts` — Google GenAI integration for batch AI commit summarization.
 
 ---
 
@@ -202,7 +209,7 @@ Contains `globals.css` — the single global stylesheet. This is where Tailwind 
 
 | File | Purpose |
 |------|---------|
-| `prisma/schema.prisma` | Defines the database schema. Contains `User`, `Project`, `Session`, `Account`, and `Verification` models. |
+| `prisma/schema.prisma` | Defines the database schema. Contains `User`, `Project`, `Session`, `Account`, `Verification`, and `Commit` models. |
 
 ---
 
@@ -301,6 +308,7 @@ The database contains the core Better Auth models + standard GitPulse models:
 - `User`, `Session`, `Account`, `Verification` — Better Auth internal tables
 - `Project` — Custom GitPulse table for workspace projects
 - `UserToProject` — Many-to-many junction table linking Users to Projects
+- `Commit` — Stores individual Git commits with AI-generated summaries
 
 ---
 
@@ -321,10 +329,12 @@ The following environment variables are strictly validated by `src/env.js` at ru
 | `BETTER_AUTH_URL` | Base URL of the application. |
 | `GOOGLE_CLIENT_ID/SECRET` | OAuth credentials for Google Sign-In. |
 | `GITHUB_CLIENT_ID/SECRET` | OAuth credentials for GitHub Sign-In. |
+| `GEMINI_API_KEY` | Key for Google GenAI used in commit summarization. |
 
 ---
 
 ## 11. Planned Next Steps
 
 1. **Dashboard Data Integration** — ✅ Connect the `/create-project` form to a REST endpoint to insert into the `Project` database model. (Implemented using Next.js Route Handlers and TanStack React Query for live sidebar updates).
-2. **Dashboard Overview UI** — Building out the real dashboard data tables replacing placeholders.
+2. **AI Commit Summarization** — ✅ Complete end-to-end flow using GitHub Octokit and Gemini 1.5 Flash to automatically index and summarize new project commits.
+3. **Dashboard Overview UI** — Building out the real dashboard data tables replacing placeholders (Commit log is complete, more sections to follow).
