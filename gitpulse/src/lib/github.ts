@@ -92,9 +92,7 @@ export const pollCommits = async (projectId: string) => {
     console.log(unprocessedCommits);
 
     return unprocessedCommits;
-};
+};  
 
 // Test invocation - comment out if no valid project ID is available
 // console.log(await pollCommits('cmsyzlsk10003ds8gyecytxhe'));
-
-// youtube 1:45:00
