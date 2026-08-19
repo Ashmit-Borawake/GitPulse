@@ -73,6 +73,16 @@ export const aiSummariseCommits = async (
       - Do NOT omit any commit.
       - Mention relevant file names where appropriate, following the example style above.
       - Base each summary solely on that commit's diff.
+      
+      FORMATTING RULES FOR SUMMARY:
+      - The summary MUST be a multiline string containing concise bullet points.
+      - Each distinct change MUST be on its own line and MUST start with \`* \`.
+      - NEVER combine multiple distinct changes into one comma-separated sentence.
+      - NEVER return the summary as a single paragraph when the commit contains multiple changes.
+      - Keep each bullet concise and focused on one change.
+      - If a commit has only one meaningful change, a single \`* \` bullet is sufficient.
+      - Do not create unnecessary bullets for trivial details that belong to the same logical change.
+      - The output must remain valid JSON. The bullet points should be contained inside the \`summary\` string using newline characters (\\n).
 
       Return a JSON array with one object per commit:
       [{ "commitHash": "<hash>", "summary": "<summary>" }]
