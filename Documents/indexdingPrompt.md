@@ -21,12 +21,12 @@ GitPulse currently uses:
 
 ### Important files for this indexing phase
 
-| File | Purpose |
-|------|---------|
-| `src/lib/github-loader.ts` | `loadGithubRepo()` — already implemented |
-| `src/lib/gemini.ts` | `aiSummariseCommits()` — batch pattern to follow |
-| `src/server/db.ts` | Prisma `db` singleton — use this for all DB access |
-| `prisma/schema.prisma` | `SourceCodeEmbedding` model — already exists |
+| File                           | Purpose                                                |
+| ------------------------------ | ------------------------------------------------------ |
+| `src/lib/github-loader.ts`     | `loadGithubRepo()` — already implemented               |
+| `src/lib/gemini.ts`            | `aiSummariseCommits()` — batch pattern to follow       |
+| `src/server/db.ts`             | Prisma `db` singleton — use this for all DB access     |
+| `prisma/schema.prisma`         | `SourceCodeEmbedding` model — already exists           |
 | `src/app/api/project/route.ts` | Project creation route — will call `indexGithubRepo()` |
 
 ---
@@ -39,38 +39,67 @@ GitPulse currently uses:
 import { GithubRepoLoader } from "@langchain/community/document_loaders/web/github";
 
 export const loadGithubRepo = async (
-    githubUrl: string,
-    githubToken?: string
+  githubUrl: string,
+  githubToken?: string,
 ) => {
-    const loader = new GithubRepoLoader(githubUrl, {
-        accessToken: githubToken || "",
-        branch: "main",
-        ignoreFiles: [
-            // Package manager lock files
-            "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb",
-            // Build / generated output
-            "dist", "build", ".next", "out", ".turbo", ".cache",
-            // Dependencies
-            "node_modules",
-            // Environment / secrets
-            ".env", ".env.local", ".env.development", ".env.production",
-            // IDE / OS files
-            ".DS_Store", "Thumbs.db", ".idea", ".vscode",
-            // Coverage / test-generated files
-            "coverage", ".nyc_output",
-            // Logs, minified, binary/media
-            "*.log", "*.min.js", "*.min.css", "*.map",
-            "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp", "*.ico",
-            "*.mp3", "*.mp4", "*.mov", "*.avi",
-            "*.zip", "*.tar", "*.gz", "*.pdf",
-        ],
-        recursive: true,
-        unknown: "warn",
-        maxConcurrency: 5,
-    });
+  const loader = new GithubRepoLoader(githubUrl, {
+    accessToken: githubToken || "",
+    branch: "main",
+    ignoreFiles: [
+      // Package manager lock files
+      "package-lock.json",
+      "yarn.lock",
+      "pnpm-lock.yaml",
+      "bun.lockb",
+      // Build / generated output
+      "dist",
+      "build",
+      ".next",
+      "out",
+      ".turbo",
+      ".cache",
+      // Dependencies
+      "node_modules",
+      // Environment / secrets
+      ".env",
+      ".env.local",
+      ".env.development",
+      ".env.production",
+      // IDE / OS files
+      ".DS_Store",
+      "Thumbs.db",
+      ".idea",
+      ".vscode",
+      // Coverage / test-generated files
+      "coverage",
+      ".nyc_output",
+      // Logs, minified, binary/media
+      "*.log",
+      "*.min.js",
+      "*.min.css",
+      "*.map",
+      "*.png",
+      "*.jpg",
+      "*.jpeg",
+      "*.gif",
+      "*.webp",
+      "*.ico",
+      "*.mp3",
+      "*.mp4",
+      "*.mov",
+      "*.avi",
+      "*.zip",
+      "*.tar",
+      "*.gz",
+      "*.pdf",
+    ],
+    recursive: true,
+    unknown: "warn",
+    maxConcurrency: 5,
+  });
 
-    const docs = await loader.load();
-    return docs;
+  const docs = await loader.load();
+  return docs;
 };
 ```
 
@@ -244,8 +273,8 @@ Do NOT truncate with `.slice(0, N)`. That discards code from large files.
 ### Chunk settings (configurable constants)
 
 ```ts
-const CHUNK_SIZE = 1500;      // in the unit expected by the installed splitter
-const CHUNK_OVERLAP = 150;    // overlap to preserve context across boundaries
+const CHUNK_SIZE = 1500; // in the unit expected by the installed splitter
+const CHUNK_OVERLAP = 150; // overlap to preserve context across boundaries
 ```
 
 > **Important:** LangChain's `RecursiveCharacterTextSplitter` measures `chunkSize` in **characters** by default, unless a custom `lengthFunction` is provided. Do NOT claim 1500 characters equals 1500 tokens. Start with a sensible code-oriented value and report the actual unit used after implementation.
@@ -267,14 +296,14 @@ Do not lose the relationship between a chunk and its original file.
 
 ```ts
 const splitter = new RecursiveCharacterTextSplitter({
-    chunkSize: CHUNK_SIZE,
-    chunkOverlap: CHUNK_OVERLAP,
+  chunkSize: CHUNK_SIZE,
+  chunkOverlap: CHUNK_OVERLAP,
 });
 
 // For each document, split and tag chunks with metadata
 for (const doc of docs) {
-    const chunks = await splitter.splitDocuments([doc]);
-    // chunks retain doc.metadata — add chunkIndex manually
+  const chunks = await splitter.splitDocuments([doc]);
+  // chunks retain doc.metadata — add chunkIndex manually
 }
 ```
 
@@ -294,18 +323,18 @@ for (const doc of docs) {
 
 ```ts
 type FileSummary = {
-    filePath: string;
-    summary: string;
+  filePath: string;
+  summary: string;
 };
 
 export async function summariseCode(
-    docs: Document[]       // a BATCH of documents, not a single document
+  docs: Document[], // a BATCH of documents, not a single document
 ): Promise<FileSummary[]> {
-    // 1. Build one prompt containing all files in the batch.
-    // 2. Call Gemini ONCE for the entire batch.
-    // 3. Parse structured JSON.
-    // 4. Validate: one result per input file, matching filePaths.
-    // 5. Return summaries mapped by filePath.
+  // 1. Build one prompt containing all files in the batch.
+  // 2. Call Gemini ONCE for the entire batch.
+  // 3. Parse structured JSON.
+  // 4. Validate: one result per input file, matching filePaths.
+  // 5. Return summaries mapped by filePath.
 }
 ```
 
@@ -424,22 +453,22 @@ Use the same SDK pattern as `aiSummariseCommits`:
 
 ```ts
 const response = await ai.models.generateContent({
-    model: 'gemini-3.6-flash',
-    contents: [systemPrompt, userPrompt],
-    config: {
-        responseMimeType: 'application/json',
-        responseSchema: {
-            type: Type.ARRAY,
-            items: {
-                type: Type.OBJECT,
-                properties: {
-                    filePath: { type: Type.STRING },
-                    summary: { type: Type.STRING },
-                },
-                required: ['filePath', 'summary'],
-            },
+  model: "gemini-3.6-flash",
+  contents: [systemPrompt, userPrompt],
+  config: {
+    responseMimeType: "application/json",
+    responseSchema: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          filePath: { type: Type.STRING },
+          summary: { type: Type.STRING },
         },
+        required: ["filePath", "summary"],
+      },
     },
+  },
 });
 ```
 
@@ -485,12 +514,10 @@ The same embedding model and dimensionality **must** later be used for user ques
 ### `generateEmbedding` function structure
 
 ```ts
-export async function generateEmbedding(
-    texts: string[]
-): Promise<number[][]> {
-    // Call the selected Gemini embedding model.
-    // Generate one 768-dimensional vector for each input text.
-    // Return vectors in the same order as the input texts.
+export async function generateEmbedding(texts: string[]): Promise<number[][]> {
+  // Call the selected Gemini embedding model.
+  // Generate one 768-dimensional vector for each input text.
+  // Return vectors in the same order as the input texts.
 }
 ```
 
@@ -528,10 +555,10 @@ The source-code embedding pipeline must embed the **actual chunk content**, not 
 
 ```ts
 // CORRECT — for RAG retrieval:
-generateEmbedding([chunkContent])
+generateEmbedding([chunkContent]);
 
 // WRONG — the summary is NOT the retrieval target:
-generateEmbedding([fileSummary])
+generateEmbedding([fileSummary]);
 ```
 
 The summary is useful metadata stored alongside the chunk. The vector must represent the source code chunk.
@@ -542,12 +569,12 @@ The summary is useful metadata stored alongside the chunk. The vector must repre
 
 ```ts
 export async function generateEmbeddings(docs: Document[]) {
-    // 1. Dynamically batch docs and call summariseCode(batch) per batch.
-    // 2. Map returned summaries back to their docs using filePath.
-    // 3. Chunk the actual source code of each document.
-    // 4. Attach the file summary to every chunk from that file.
-    // 5. Generate embeddings for the chunk content.
-    // 6. Return one record per chunk.
+  // 1. Dynamically batch docs and call summariseCode(batch) per batch.
+  // 2. Map returned summaries back to their docs using filePath.
+  // 3. Chunk the actual source code of each document.
+  // 4. Attach the file summary to every chunk from that file.
+  // 5. Generate embeddings for the chunk content.
+  // 6. Return one record per chunk.
 }
 ```
 
@@ -583,16 +610,16 @@ Do **not** return one vector for the entire file.
 
 ```ts
 export const indexGithubRepo = async (
-    projectId: string,
-    githubUrl: string,
-    githubToken?: string
+  projectId: string,
+  githubUrl: string,
+  githubToken?: string,
 ) => {
-    const docs = await loadGithubRepo(githubUrl, githubToken);
+  const docs = await loadGithubRepo(githubUrl, githubToken);
 
-    const allEmbeddings = await generateEmbeddings(docs);
+  const allEmbeddings = await generateEmbeddings(docs);
 
-    // Save all chunk records to SourceCodeEmbedding.
-    // Use the two-step Prisma + $executeRaw pattern (see Part 7).
+  // Save all chunk records to SourceCodeEmbedding.
+  // Use the two-step Prisma + $executeRaw pattern (see Part 7).
 };
 ```
 
@@ -607,14 +634,14 @@ Prisma does not handle `Unsupported("vector(768)")` fields as normal scalar valu
 ```ts
 // Step 1: Create the record with normal Prisma fields
 const record = await db.sourceCodeEmbedding.create({
-    data: {
-        summary: embedding.summary,
-        content: embedding.sourceCode,
-        fileName: embedding.fileName,
-        filePath: embedding.filePath,
-        chunkIndex: embedding.chunkIndex,
-        projectId,
-    },
+  data: {
+    summary: embedding.summary,
+    content: embedding.sourceCode,
+    fileName: embedding.fileName,
+    filePath: embedding.filePath,
+    chunkIndex: embedding.chunkIndex,
+    projectId,
+  },
 });
 
 // Step 2: Update the vector field using parameterized raw SQL
@@ -647,20 +674,26 @@ The existing `src/app/api/project/route.ts` currently calls only `pollCommits`. 
 // After project is created in the database:
 
 try {
-    await indexGithubRepo(
-        project.id,
-        repoUrl,          // field name from current body: repoUrl
-        githubToken
-    );
+  await indexGithubRepo(
+    project.id,
+    repoUrl, // field name from current body: repoUrl
+    githubToken,
+  );
 } catch (indexError) {
-    const message = indexError instanceof Error ? indexError.message : String(indexError);
-    console.error('[indexGithubRepo] Failed to index repository for project', project.id, ':', message);
+  const message =
+    indexError instanceof Error ? indexError.message : String(indexError);
+  console.error(
+    "[indexGithubRepo] Failed to index repository for project",
+    project.id,
+    ":",
+    message,
+  );
 }
 
 try {
-    await pollCommits(project.id);
+  await pollCommits(project.id);
 } catch (pollError) {
-    // existing error handling
+  // existing error handling
 }
 ```
 
@@ -688,7 +721,9 @@ For every major stage, log a prefixed message so failures are easy to locate:
 console.log("[GitHub Loader] Loading repository...");
 console.log(`[GitHub Loader] Loaded ${docs.length} documents`);
 
-console.log(`[Summary] Processing batch ${batchIndex + 1}/${totalBatches} (${batch.length} files)`);
+console.log(
+  `[Summary] Processing batch ${batchIndex + 1}/${totalBatches} (${batch.length} files)`,
+);
 console.log(`[Summary] Batch ${batchIndex + 1} complete`);
 
 console.log(`[Chunking] ${docs.length} documents -> ${totalChunks} chunks`);
@@ -697,22 +732,24 @@ console.log(`[Embedding] Processing ${chunks.length} chunks`);
 console.log(`[Embedding] Generated ${embeddings.length} vectors`);
 
 console.log(`[Database] Saving ${allEmbeddings.length} records...`);
-console.log(`[Database] Inserted ${allEmbeddings.length} SourceCodeEmbedding records`);
+console.log(
+  `[Database] Inserted ${allEmbeddings.length} SourceCodeEmbedding records`,
+);
 ```
 
 Do **not** print full source code or full embedding vectors to the console.
 
 ### Failure categories
 
-| Failure | Behavior |
-|---------|----------|
-| Single problematic file (e.g., Gemini cannot summarize it) | Log the `filePath`, skip that file, continue |
-| Temporary Gemini 503/rate-limit | Retry with exponential backoff (same as `aiSummariseCommits`) |
-| Invalid API key / missing `GEMINI_API_KEY` | Fail clearly — do not continue |
-| Database unavailable | Fail clearly |
-| Embedding model unavailable | Fail clearly |
-| pgvector insert failure | Fail clearly |
-| Entire batch summarization failure after retries | Log and fail — do not silently skip batch |
+| Failure                                                    | Behavior                                                      |
+| ---------------------------------------------------------- | ------------------------------------------------------------- |
+| Single problematic file (e.g., Gemini cannot summarize it) | Log the `filePath`, skip that file, continue                  |
+| Temporary Gemini 503/rate-limit                            | Retry with exponential backoff (same as `aiSummariseCommits`) |
+| Invalid API key / missing `GEMINI_API_KEY`                 | Fail clearly — do not continue                                |
+| Database unavailable                                       | Fail clearly                                                  |
+| Embedding model unavailable                                | Fail clearly                                                  |
+| pgvector insert failure                                    | Fail clearly                                                  |
+| Entire batch summarization failure after retries           | Log and fail — do not silently skip batch                     |
 
 Do not use empty catch blocks. Every catch block must log at minimum the error message and the relevant file path or batch index.
 
@@ -724,9 +761,11 @@ Do NOT write:
 
 ```ts
 // BAD — one uncontrolled Gemini request per file:
-await Promise.all(docs.map(async doc => {
+await Promise.all(
+  docs.map(async (doc) => {
     await gemini(doc);
-}));
+  }),
+);
 ```
 
 Instead:
@@ -742,7 +781,7 @@ Instead:
 Use the metadata provided by `GithubRepoLoader`. For LangChain documents loaded by this loader, the relevant field is typically:
 
 ```ts
-doc.metadata.source  // repository-relative file path
+doc.metadata.source; // repository-relative file path
 ```
 
 Store:
@@ -867,16 +906,16 @@ Before returning the answer, verify that:
 
 ## Summary: Architectural Rules
 
-| Rule | Requirement |
-|------|-------------|
-| Chunking target | Actual source code (`doc.pageContent`) |
-| Embedding target | Each chunk's content individually |
-| Summary target | Entire file (one per file) |
-| Embedding model | Separate Gemini embedding model — not the generative model |
-| Embedding dimension | Exactly 768 — verify before using any model |
-| Batching strategy | Dynamic — max 10 files + max total input chars |
-| Fixed batch size | Never — always dynamic |
-| pgvector insert | Two-step: Prisma create + `$executeRaw` parameterized SQL |
-| Field names | Use actual schema field names — `content`, not `sourceCode` |
-| Error handling | Fail clearly on systemic errors; log and continue on single-file errors |
-| Logging | Prefixed console logs at every major pipeline stage |
+| Rule                | Requirement                                                             |
+| ------------------- | ----------------------------------------------------------------------- |
+| Chunking target     | Actual source code (`doc.pageContent`)                                  |
+| Embedding target    | Each chunk's content individually                                       |
+| Summary target      | Entire file (one per file)                                              |
+| Embedding model     | Separate Gemini embedding model — not the generative model              |
+| Embedding dimension | Exactly 768 — verify before using any model                             |
+| Batching strategy   | Dynamic — max 10 files + max total input chars                          |
+| Fixed batch size    | Never — always dynamic                                                  |
+| pgvector insert     | Two-step: Prisma create + `$executeRaw` parameterized SQL               |
+| Field names         | Use actual schema field names — `content`, not `sourceCode`             |
+| Error handling      | Fail clearly on systemic errors; log and continue on single-file errors |
+| Logging             | Prefixed console logs at every major pipeline stage                     |

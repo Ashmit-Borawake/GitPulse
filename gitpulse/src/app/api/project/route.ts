@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { db } from '@/server/db';
 import { pollCommits } from '@/lib/github';
+import { indexGithubRepo } from '@/lib/github-loader';
 
 export async function POST(request: Request) {
     try {
@@ -30,6 +31,7 @@ export async function POST(request: Request) {
             );
         }
 
+        // Step 1: Create a Project in Database
         const project = await db.project.create({
             data: {
                 name: projectName,
@@ -43,8 +45,14 @@ export async function POST(request: Request) {
             }
         });
 
-        // Run commit polling separately so a Gemini/GitHub failure
-        // doesn't prevent the project from being created.
+        /**
+         * Step 2: Poll Commits
+         *
+         * Synchronously fetch the initial set of commits for the repository.
+         * We await this so that the dashboard has immediate commit data to display,
+         * but we wrap it in a try-catch so that a failure here doesn't roll back
+         * the project creation.
+         */
         let commitSyncError: string | null = null;
         try {
             await pollCommits(project.id);
@@ -53,6 +61,22 @@ export async function POST(request: Request) {
             console.error('[pollCommits] Failed to sync commits for project', project.id, ':', message);
             commitSyncError = message;
         }
+
+        /**
+         * Step 3: Index Repository for AI (Embeddings)
+         *
+         * Kick off the background process to chunk and embed the source code
+         * for AI Q&A features. This operation can take a while for large repos,
+         * so we do NOT await it. It runs independently and logs errors if it fails.
+         */
+        indexGithubRepo(
+            project.id,
+            repoUrl,
+            githubToken,
+        ).catch((indexError) => {
+            const message = indexError instanceof Error ? indexError.message : String(indexError);
+            console.error('[indexGithubRepo] Failed to index repository for project', project.id, ':', message);
+        });
 
         return NextResponse.json(
             {
