@@ -12,6 +12,7 @@ When joining a new project or reviewing a large codebase, developers often strug
 * **Repository Indexing:** Intelligently reads and processes the entire codebase, automatically ignoring unnecessary build files and dependencies.
 * **AI-Powered Code Understanding:** Provides human-readable summaries of complex code files to make them easier to grasp.
 * **RAG-based Q&A:** Allows developers to chat directly with their codebase. You can ask specific questions like "How does the authentication work?" and get accurate answers based directly on the project's actual code.
+* **Quota-Resilient Embedding Pipeline:** Uses a pool of up to 10 Gemini API keys with automatic round-robin rotation, transparently recovering from 429 quota errors without interrupting the indexing process.
 
 ## 4. Technology Stack
 * **Frontend: Next.js, React, Tailwind CSS:** Used to build a fast, responsive, and beautiful user interface where developers can view their dashboards and chat with the AI.
@@ -20,10 +21,11 @@ When joining a new project or reviewing a large codebase, developers often strug
 * **Database: PostgreSQL / Supabase:** A reliable relational database used to store user data, project details, and analyzed commits.
 * **ORM: Prisma:** Acts as a bridge between the backend code and the PostgreSQL database, making it easy and safe to read and write data.
 * **GitHub Integration: Octokit:** The official tool used to securely communicate with GitHub to fetch repository details and commit history.
-* **AI: Google Gemini:** The core intelligence engine that summarizes code, explains commits, and answers user questions.
+* **AI: Google Gemini:** The core intelligence engine that summarizes commits (`gemini-3.6-flash`) and generates embeddings (`gemini-embedding-2`).
 * **LangChain:** Used to efficiently load files directly from GitHub and split large code files into smaller, manageable chunks.
 * **RAG (Retrieval-Augmented Generation):** The system design that allows the AI to search the database for relevant code chunks before answering a question, ensuring answers are highly accurate and specific to the repository.
-* **Embeddings: Gemini Text Embeddings:** Converts chunks of code into numerical vectors (lists of numbers). This helps the system understand the "meaning" of the code so it can find relevant files when a user asks a question.
+* **Embeddings: Gemini Embedding 2 (`gemini-embedding-2`):** Converts chunks of code into 768-dimensional numerical vectors that capture semantic meaning, enabling accurate similarity searches at query time.
+* **Multi-Key Embedding Pool:** Up to 10 Gemini API keys (one per GCP project) are pooled with round-robin rotation in `gemini.ts`. On a 429 quota error, the pool transparently rotates to the next key. If all keys are exhausted, it sleeps 61 seconds for the TPM window to reset, then retries — all without any code changes in the calling layer.
 * **Vector Database: pgvector:** An extension for PostgreSQL that stores the numerical embeddings and allows for efficient similarity searches when retrieving code for the AI.
 
 ## 5. How the System Works
@@ -68,3 +70,6 @@ Large code files cannot be processed efficiently by the AI all at once. By divid
 
 **6. What problem does GitPulse solve?**
 It drastically reduces the time developers spend trying to understand unfamiliar repositories, complex code, and recent commits by providing AI-powered summaries and instant, codebase-specific Q&A.
+
+**7. Why do you use multiple Gemini API keys for embeddings?**
+The Gemini free tier limits each API key (per GCP project) to 30,000 tokens per minute (TPM). A typical repository produces ~1,000+ code chunks, which can push ~33K+ tokens through the embedding API in under a minute — exceeding the limit. By maintaining a pool of up to 10 keys (each from a different GCP project with its own independent 30K TPM quota), the system distributes token usage across keys using round-robin rotation. If a key still hits its quota, it automatically rotates to the next one. If all keys are exhausted simultaneously, it sleeps 61 seconds for the quota window to reset, then retries — completely transparently to the rest of the application.

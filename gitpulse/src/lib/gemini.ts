@@ -1,11 +1,8 @@
-﻿import { GoogleGenAI, Type, ApiError } from '@google/genai';
-import { type Document } from '@langchain/core/documents';
+import { GoogleGenAI, Type, ApiError } from '@google/genai';
 
 // ---------------------------------------------------------------------------
-// Shared setup
+// Shared utilities
 // ---------------------------------------------------------------------------
-
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -24,22 +21,17 @@ type CommitSummary = {
 };
 
 // ---------------------------------------------------------------------------
-// Code summarisation types + constants
+// Shared constants
 // ---------------------------------------------------------------------------
 
-export type FileSummary = {
-  filePath: string;
-  summary: string;
-};
-
-/** Gemini generative model used for all summarisation tasks. */
+/** Gemini generative model used for commit summarisation. */
 const SUMMARISE_MODEL = 'gemini-3.6-flash';
 
 /**
- * Gemini embedding model. text-embedding-004 produces 768-d vectors natively.
+ * Gemini embedding model. gemini-embedding-2 supports variable dimensions.
  * We explicitly set outputDimensionality: 768 for safety.
  */
-const EMBEDDING_MODEL = 'text-embedding-004';
+const EMBEDDING_MODEL = 'gemini-embedding-2';
 
 /** Number of dimensions required by the vector(768) pgvector column. */
 const EMBEDDING_DIMENSIONS = 768;
@@ -48,7 +40,106 @@ const EMBEDDING_DIMENSIONS = 768;
 const MAX_RETRIES = 3;
 
 // ---------------------------------------------------------------------------
-// aiSummariseCommits — unchanged
+// Summarisation client (single key — not pooled)
+// ---------------------------------------------------------------------------
+
+/**
+ * Single shared GoogleGenAI client used exclusively for commit summarisation.
+ * This is NOT part of the embedding key pool; commit summarisation has
+ * different quota characteristics and does not need key rotation.
+ */
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY ?? process.env.GEMINI_API_KEY_1,
+});
+
+// ---------------------------------------------------------------------------
+// Embedding key pool — multi-key round-robin for quota distribution
+// ---------------------------------------------------------------------------
+
+/**
+ * Collects GEMINI_API_KEY_1 … GEMINI_API_KEY_10 from the environment and
+ * returns one GoogleGenAI client per key.
+ *
+ * Falls back to GEMINI_API_KEY for single-key / legacy mode if no numbered
+ * keys are found.
+ *
+ * Throws at startup if no key whatsoever is configured, so the error surfaces
+ * immediately rather than at the first embedding request.
+ */
+function buildEmbeddingKeyPool(): GoogleGenAI[] {
+  const pool: GoogleGenAI[] = [];
+
+  for (let i = 1; i <= 10; i++) {
+    const key = process.env[`GEMINI_API_KEY_${i}`];
+    if (key) {
+      pool.push(new GoogleGenAI({ apiKey: key }));
+    }
+  }
+
+  // Legacy / single-key fallback
+  if (pool.length === 0) {
+    const legacyKey = process.env.GEMINI_API_KEY;
+    if (legacyKey) {
+      pool.push(new GoogleGenAI({ apiKey: legacyKey }));
+    }
+  }
+
+  if (pool.length === 0) {
+    throw new Error(
+      '[Gemini] No API keys configured. ' +
+        'Set GEMINI_API_KEY_1 … GEMINI_API_KEY_N (or GEMINI_API_KEY) in your .env file.'
+    );
+  }
+
+  console.log(`[Gemini] Embedding key pool: ${pool.length} key(s).`);
+  return pool;
+}
+
+/** Pool of GoogleGenAI clients, one per API key — initialized once at module load. */
+const embeddingPool: GoogleGenAI[] = buildEmbeddingKeyPool();
+
+/**
+ * Module-level round-robin cursor.
+ *
+ * Rules:
+ * - After a SUCCESSFUL request, set to (successfulKeyIndex + 1) % poolSize.
+ * - NOT modified during internal 429 rotation; stays frozen until a key succeeds.
+ * - This guarantees the next batch always starts from the key immediately
+ *   after the one that actually completed the previous batch.
+ */
+let embeddingKeyIndex = 0;
+
+// ---------------------------------------------------------------------------
+// isRateLimitError — quota/rate-limit detection helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns true only when `error` is a genuine quota/rate-limit 429 from Gemini
+ * that benefits from key rotation.
+ *
+ * Both conditions must be true:
+ *   1. error instanceof ApiError && error.status === 429
+ *   2. error.message (lowercased) contains "quota", "rate limit",
+ *      or "resource_exhausted"
+ *
+ * Auth failures, policy violations, and other 429 variants return false and
+ * are re-thrown immediately without rotation.
+ */
+function isRateLimitError(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.status !== 429) {
+    return false;
+  }
+
+  const msg = (error.message ?? '').toLowerCase();
+  return (
+    msg.includes('quota') ||
+    msg.includes('rate limit') ||
+    msg.includes('resource_exhausted')
+  );
+}
+
+// ---------------------------------------------------------------------------
+// aiSummariseCommits — Git commit summarisation for the dashboard/commit log
 // ---------------------------------------------------------------------------
 
 /**
@@ -169,198 +260,23 @@ export const aiSummariseCommits = async (
 };
 
 // ---------------------------------------------------------------------------
-// summariseCode — file summarisation for RAG indexing
-// ---------------------------------------------------------------------------
-
-/**
- * Sends a batch of source-code documents to Gemini in ONE API request and
- * returns one summary per file, matched by filePath (never by array index).
- * Single-file structural failures are logged and skipped; 503s are retried.
- *
- * @param docs - A batch of LangChain Document objects.
- * @returns Array of { filePath, summary } for every successfully summarised file.
- */
-export async function summariseCode(docs: Document[]): Promise<FileSummary[]> {
-  if (docs.length === 0) return [];
-
-  const fileBlocks = docs
-    .map((doc, i) => {
-      const filePath =
-        (doc.metadata?.source as string | undefined) ?? `file_${i}`;
-      return `FILE ${i + 1}\nPATH: ${filePath}\n\n${doc.pageContent}\n\n---`;
-    })
-    .join('\n\n');
-
-  const systemPrompt = `You are an expert senior software engineer analyzing a software repository.
-
-    You will receive MULTIPLE source-code files in a single request.
-
-    Your task is to independently analyze EVERY file and produce EXACTLY ONE summary for EACH file.
-
-    IMPORTANT RULES:
-
-    1. Treat every file as an independent input.
-    2. NEVER combine two or more files into a single summary.
-    3. NEVER omit a file.
-    4. NEVER create a summary for a file that was not provided.
-    5. The number of output objects MUST exactly match the number of input files.
-    6. Preserve the exact filePath provided in the input.
-    7. Use filePath as the identifier to associate each summary with its original file.
-    8. Do not rely on output ordering for matching files; the filePath must be included in every result.
-    9. Base the summary ONLY on the provided source code.
-    10. Do not invent functionality, dependencies, APIs, database behavior, or architectural responsibilities.
-
-    SUMMARY REQUIREMENTS:
-
-    For every file, produce a concise summary of approximately 90 to 110 words.
-    This is a target range, not a strict exact count — aim for around 100 words.
-    Summaries significantly shorter than 90 words may lack useful detail.
-    Summaries significantly longer than 110 words should be trimmed.
-
-    The summary should explain:
-    - What the file is responsible for.
-    - Its main purpose in the project.
-    - Important functions, classes, components, or logic it contains.
-    - Important interactions with other parts of the application when clearly visible.
-
-    Do NOT:
-    - Explain every line of code.
-    - Include unnecessary implementation details.
-    - Repeat the file path inside the summary.
-    - Add introductory phrases such as "This file contains..."
-    - Use vague statements such as "This file handles various things."
-    - Guess functionality that cannot be determined from the code.
-
-    LENGTH GUIDELINE:
-
-    Target 90-110 words per summary. Reasonable variation is acceptable.
-    This guideline applies independently to EVERY file.
-
-    OUTPUT FORMAT:
-
-    Return ONLY a valid JSON array. Each object MUST contain exactly these fields:
-
-    {
-      "filePath": "<exact input file path>",
-      "summary": "<summary of that specific file>"
-    }
-
-    FINAL VALIDATION BEFORE RESPONDING:
-
-    Before returning the answer, verify that:
-    - Every input file has exactly one output object.
-    - No input file is missing.
-    - No extra output object exists.
-    - Every filePath exactly matches one of the provided input file paths.
-    - The response is valid JSON.
-    - There is NO text before or after the JSON array.`;
-
-  const userPrompt = `Here are the source-code files to summarise:\n\n${fileBlocks}`;
-
-  // Build a lookup of filePath for each doc so we can isolate per-file failures.
-  const docPaths = docs.map(
-    (doc, i) => (doc.metadata?.source as string | undefined) ?? `file_${i}`
-  );
-  const inputPathSet = new Set(docPaths);
-
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      const response = await ai.models.generateContent({
-        model: SUMMARISE_MODEL,
-        contents: [systemPrompt, userPrompt],
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                filePath: { type: Type.STRING },
-                summary: { type: Type.STRING },
-              },
-              required: ['filePath', 'summary'],
-            },
-          },
-        },
-      });
-
-      const raw = response.text;
-      if (!raw) {
-        throw new Error('[summariseCode] Gemini returned an empty response');
-      }
-
-      const parsed = JSON.parse(raw) as FileSummary[];
-
-      if (!Array.isArray(parsed)) {
-        throw new Error('[summariseCode] Response is not an array');
-      }
-
-      // -----------------------------------------------------------------------
-      // Per-file validation: isolate problematic files rather than failing all.
-      // -----------------------------------------------------------------------
-      const returnedPaths = new Set<string>();
-      const validSummaries: FileSummary[] = [];
-
-      for (const item of parsed) {
-        if (!item.filePath || !item.summary) {
-          console.warn(
-            `[Summary] Skipping entry with missing filePath or summary: ${JSON.stringify(item)}`
-          );
-          continue;
-        }
-        if (!inputPathSet.has(item.filePath)) {
-          console.warn(
-            `[Summary] Skipping unrecognised filePath in response: "${item.filePath}"`
-          );
-          continue;
-        }
-        if (returnedPaths.has(item.filePath)) {
-          console.warn(
-            `[Summary] Skipping duplicate filePath in response: "${item.filePath}"`
-          );
-          continue;
-        }
-        returnedPaths.add(item.filePath);
-        validSummaries.push(item);
-      }
-
-      for (const p of inputPathSet) {
-        if (!returnedPaths.has(p)) {
-          console.warn(
-            `[Summary] No summary returned for "${p}" — this file will be skipped`
-          );
-        }
-      }
-
-      return validSummaries;
-    } catch (err) {
-      const isUnavailable = err instanceof ApiError && err.status === 503;
-
-      if (isUnavailable && attempt < MAX_RETRIES) {
-        const delayMs = 1000 * Math.pow(2, attempt - 1);
-        console.warn(
-          `[Summary] 503 on attempt ${attempt}/${MAX_RETRIES} - retrying in ${delayMs}ms...`
-        );
-        await sleep(delayMs);
-        continue;
-      }
-
-      throw err;
-    }
-  }
-
-  throw new Error('[summariseCode] All retry attempts exhausted');
-}
-
-// ---------------------------------------------------------------------------
-// generateEmbedding — 768-dimensional vector generation
+// generateEmbedding — 768-dimensional vector generation with key rotation
 // ---------------------------------------------------------------------------
 
 /**
  * Generates 768-dimensional embeddings for an array of text strings using
- * the Gemini text-embedding-004 model.
+ * the Gemini gemini-embedding-2 model.
  *
  * Accepts multiple texts and returns one vector per text in the same order.
+ *
+ * Internally manages a pool of up to 10 API keys (GEMINI_API_KEY_1 … _10)
+ * with round-robin rotation and transparent 429 quota-exhaustion handling:
+ *
+ *   - 429 quota/rate-limit  → rotate to next key; sleep 61s if all exhausted
+ *   - 503 UNAVAILABLE       → exponential backoff (1s, 2s, 4s)
+ *   - Any other error       → re-thrown immediately
+ *
+ * The public API is unchanged: callers pass texts, receive vectors.
  *
  * @param texts - Array of plain-text strings to embed (one vector each).
  * @returns Array of 768-dimensional number arrays, same order as `texts`.
@@ -368,29 +284,102 @@ export async function summariseCode(docs: Document[]): Promise<FileSummary[]> {
 export async function generateEmbedding(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
 
-  const response = await ai.models.embedContent({
-    model: EMBEDDING_MODEL,
-    contents: texts,
-    config: {
-      outputDimensionality: EMBEDDING_DIMENSIONS,
-    },
-  });
+  const poolSize = embeddingPool.length;
 
-  const embeddings = response.embeddings;
-  const embCount = embeddings?.length ?? 0;
-  if (embCount !== texts.length) {
-    throw new Error(
-      `[generateEmbedding] Expected ${texts.length} embedding(s), got ${embCount}`
-    );
-  }
+  // Snapshot the starting key for this call.
+  // Internal 429 rotation advances a local offset; the global counter is only
+  // updated once a key succeeds (or after a 61s sleep resets).
+  const startIndex = embeddingKeyIndex % poolSize;
+  let triedKeyCount = 0; // local offset within this call — never touches global
 
-  return embeddings!.map((e, i) => {
-    const dimCount = e.values?.length ?? 0;
-    if (dimCount !== EMBEDDING_DIMENSIONS) {
-      throw new Error(
-        `[generateEmbedding] Embedding ${i} has ${dimCount} dimensions, expected ${EMBEDDING_DIMENSIONS}`
-      );
+  // gemini-embedding-2 requires separate Content objects to return separate embeddings
+  const formattedContents = texts.map((text) => ({
+    parts: [{ text }],
+  }));
+
+  while (true) {
+    const currentKeyIdx = (startIndex + triedKeyCount) % poolSize;
+    const client = embeddingPool[currentKeyIdx]!;
+
+    try {
+      // ── 503 UNAVAILABLE: exponential backoff ────────────────────────────
+      let response: Awaited<ReturnType<typeof client.models.embedContent>>;
+      for (let attempt503 = 1; attempt503 <= MAX_RETRIES; attempt503++) {
+        try {
+          response = await client.models.embedContent({
+            model: EMBEDDING_MODEL,
+            contents: formattedContents,
+            config: {
+              outputDimensionality: EMBEDDING_DIMENSIONS,
+            },
+          });
+          break; // success — exit 503-retry loop
+        } catch (err503) {
+          const isUnavailable =
+            err503 instanceof ApiError && err503.status === 503;
+
+          if (isUnavailable && attempt503 < MAX_RETRIES) {
+            const delayMs = 1000 * Math.pow(2, attempt503 - 1); // 1s, 2s
+            console.warn(
+              `[Gemini] Key ${currentKeyIdx + 1} — 503 on attempt ${attempt503}/${MAX_RETRIES}, retrying in ${delayMs}ms…`
+            );
+            await sleep(delayMs);
+            continue;
+          }
+
+          // Not a 503, or all 503 retries exhausted — propagate to outer catch
+          throw err503;
+        }
+      }
+
+      // ── Validate response ────────────────────────────────────────────────
+      const embeddings = response!.embeddings;
+      const embCount = embeddings?.length ?? 0;
+      if (embCount !== texts.length) {
+        throw new Error(
+          `[generateEmbedding] Expected ${texts.length} embedding(s), got ${embCount}`
+        );
+      }
+
+      const vectors = embeddings!.map((e, i) => {
+        const dimCount = e.values?.length ?? 0;
+        if (dimCount !== EMBEDDING_DIMENSIONS) {
+          throw new Error(
+            `[generateEmbedding] Embedding ${i} has ${dimCount} dimensions, expected ${EMBEDDING_DIMENSIONS}`
+          );
+        }
+        return e.values!;
+      });
+
+      // ── Advance global round-robin cursor past the key that succeeded ────
+      embeddingKeyIndex = (currentKeyIdx + 1) % poolSize;
+
+      return vectors;
+
+    } catch (err) {
+      // ── 429 quota/rate-limit: rotate to next key ─────────────────────────
+      if (isRateLimitError(err)) {
+        console.warn(
+          `[Gemini] Key ${currentKeyIdx + 1} quota-limited (429), rotating…`
+        );
+        triedKeyCount++;
+
+        if (triedKeyCount < poolSize) {
+          // Still have untried keys — loop immediately
+          continue;
+        }
+
+        // All keys exhausted — sleep 61s and reset local offset
+        console.warn(
+          `[Gemini] All ${poolSize} embedding key(s) quota-limited. Sleeping 61s for window reset…`
+        );
+        await sleep(61_000);
+        triedKeyCount = 0; // reset local offset; retry from startIndex
+        continue;
+      }
+
+      // ── Any other error: re-throw immediately ────────────────────────────
+      throw err;
     }
-    return e.values!;
-  });
+  }
 }

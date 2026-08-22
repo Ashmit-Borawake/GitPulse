@@ -22,7 +22,9 @@ export async function POST(request: Request) {
             repoUrl?: string;
             githubToken?: string;
         };
-        const { projectName, repoUrl, githubToken } = body;
+        const { projectName, repoUrl } = body;
+        let { githubToken } = body;
+        if (githubToken === "") githubToken = undefined;
 
         if (!projectName || !repoUrl) {
             return NextResponse.json(
@@ -55,11 +57,22 @@ export async function POST(request: Request) {
          */
         let commitSyncError: string | null = null;
         try {
-            await pollCommits(project.id);
-        } catch (pollError) {
+            await pollCommits(project.id, githubToken);
+        } catch (pollError: unknown) {
+            console.error('[pollCommits] Failed to sync commits for project', project.id, ':', pollError);
+            
+            const err = pollError as { status?: number, response?: { headers?: Record<string, string> } };
             const message = pollError instanceof Error ? pollError.message : String(pollError);
-            console.error('[pollCommits] Failed to sync commits for project', project.id, ':', message);
-            commitSyncError = message;
+            const isRateLimit = err?.status === 403 && (err?.response?.headers?.['x-ratelimit-remaining'] === '0' || message.toLowerCase().includes('rate limit'));
+            const isAccessError = err?.status === 404 || err?.status === 403 || err?.status === 401 || message.toLowerCase().includes('not found') || message.toLowerCase().includes('bad credentials');
+            
+            if (isRateLimit) {
+                commitSyncError = "GitHub API rate limit reached. Try again later or provide your own GitHub token.";
+            } else if (isAccessError) {
+                commitSyncError = "Unable to access the GitHub repository. Check the repository URL or provide a GitHub token with access.";
+            } else {
+                commitSyncError = "We couldn't finish indexing this repository. Please try again.";
+            }
         }
 
         /**

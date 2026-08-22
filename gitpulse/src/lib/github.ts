@@ -2,7 +2,7 @@ import { db } from "@/server/db";
 import { Octokit } from "octokit";
 import { aiSummariseCommits } from "./gemini";
 
-export const octokit = new Octokit();
+// The global octokit instance is removed to ensure we select the token dynamically.
 
 type Response = {
     commitHash: string;
@@ -12,11 +12,12 @@ type Response = {
     commitDate: string;
 };
 
-type GitHubCommit = NonNullable<Awaited<ReturnType<typeof octokit.rest.repos.listCommits>>["data"][0]>;
+
 
 // Fetches and returns the top 10 most recent commits from a given GitHub repository URL.
 export const getCommitHashes = async (
-    githubUrl: string
+    githubUrl: string,
+    githubToken?: string
 ): Promise<Response[]> => {
     // Parse owner and repo from github URL
     const urlParts = githubUrl.split("/");
@@ -27,18 +28,24 @@ export const getCommitHashes = async (
         throw new Error("Invalid github url");
     }
 
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+    const token = githubToken || process.env.GITHUB_TOKEN;
+    const octokit = new Octokit({
+        ...(token ? { auth: token } : {}),
+    });
+
     const { data } = await octokit.rest.repos.listCommits({
         owner,
         repo,
     });
 
     const sortedCommits = data.sort(
-        (a: GitHubCommit, b: GitHubCommit) =>
+        (a, b) =>
             new Date(b.commit.author?.date ?? "").getTime() -
             new Date(a.commit.author?.date ?? "").getTime()
     );
 
-    return sortedCommits.slice(0, 10).map((commit: GitHubCommit) => ({
+    return sortedCommits.slice(0, 10).map((commit) => ({
         commitHash: commit.sha,
         commitMessage: commit.commit.message ?? "",
         commitAuthorName: commit.commit.author?.name ?? "",
@@ -51,7 +58,7 @@ export const getCommitHashes = async (
 export const fetchProjectGithubUrl = async (projectId: string) => {
     const project = await db.project.findUnique({
         where: { id: projectId },
-        select: { githubUrl: true },
+        select: { githubUrl: true, githubToken: true },
     });
 
     if (!project?.githubUrl) {
@@ -82,10 +89,16 @@ export const filterUnprocessedCommits = async (
 // Fetches the raw .diff content for a single commit from GitHub.
 const fetchCommitDiff = async (
     githubUrl: string,
-    commitHash: string
+    commitHash: string,
+    githubToken?: string
 ): Promise<string> => {
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+    const token = githubToken || process.env.GITHUB_TOKEN;
     const res = await fetch(`${githubUrl}/commit/${commitHash}.diff`, {
-        headers: { Accept: "application/vnd.github.v3.diff" },
+        headers: { 
+            Accept: "application/vnd.github.v3.diff",
+            ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
     });
 
     if (!res.ok) {
@@ -98,10 +111,13 @@ const fetchCommitDiff = async (
 };
 
 // Orchestrates: fetch commits → filter unprocessed → fetch all diffs → ONE Gemini call → save to DB.
-export const pollCommits = async (projectId: string) => {
-    const { githubUrl } = await fetchProjectGithubUrl(projectId);
+export const pollCommits = async (projectId: string, githubToken?: string) => {
+    const { githubUrl, project } = await fetchProjectGithubUrl(projectId);
 
-    const commitHashes = await getCommitHashes(githubUrl);
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+    const tokenToUse = githubToken || project.githubToken || undefined;
+
+    const commitHashes = await getCommitHashes(githubUrl, tokenToUse);
 
     const unprocessedCommits = await filterUnprocessedCommits(
         projectId,
@@ -116,7 +132,7 @@ export const pollCommits = async (projectId: string) => {
     // Fetch each commit's diff from GitHub (multiple GitHub requests — this is fine).
     const diffResults = await Promise.allSettled(
         unprocessedCommits.map(async (commit) => {
-            const diff = await fetchCommitDiff(githubUrl, commit.commitHash);
+            const diff = await fetchCommitDiff(githubUrl, commit.commitHash, tokenToUse);
             return { commitHash: commit.commitHash, diff };
         })
     );

@@ -29,8 +29,7 @@ const CreatePage = () => {
       // Warn if commit summarisation failed (project was still saved)
       if (res.data.commitSyncError) {
         toast.warning(
-          "Project created, but we couldn't fetch commit summaries right now. " +
-          "This is usually a temporary issue — try again in a moment.",
+          res.data.commitSyncError,
           { duration: 6000 }
         );
       }

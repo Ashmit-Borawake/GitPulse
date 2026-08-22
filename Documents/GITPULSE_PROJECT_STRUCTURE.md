@@ -1,8 +1,8 @@
 # GitPulse — Project Structure Reference
 
-> **Document status:** Current state as of the Authentication & Initial Setup Phase implementation.
+> **Document status:** Current state as of the Gemini API Key Rotation implementation.
 > This document describes what **actually exists** in the repository right now.
-> It will need to be updated when new phases (dashboard layout, data models, etc.) are implemented.
+> It will need to be updated when new phases (Q&A chat interface, dashboard expansions, etc.) are implemented.
 
 ---
 
@@ -36,14 +36,16 @@ GitPulse/                          ← Monorepo root
 │   ├── 03_PAGE_IMPLEMENTATION.md
 │   ├── 04_ANIMATIONS_AND_SCROLL.md
 │   ├── BETTER_AUTH_FLOW.md
-│   └── GITPULSE_PROJECT_STRUCTURE.md
+│   ├── GeminiKeyRoation.md        ← Gemini API key rotation design & implementation plan
+│   ├── GITPULSE_PROJECT_STRUCTURE.md
+│   └── PROJECT_SUMMARY.md         ← High-level project overview & viva Q&A
 │
 ├── README.md                      ← Root-level placeholder README
 │
 └── gitpulse/                      ← Next.js application root
     │
     ├── prisma/
-    │   └── schema.prisma          ← Prisma schema (PostgreSQL with auth models + Project model)
+    │   └── schema.prisma          ← Prisma schema (PostgreSQL with auth, Project, Commit, and vector embeddings)
     │
     ├── public/
     │   └── favicon.ico
@@ -73,8 +75,8 @@ GitPulse/                          ← Monorepo root
     │   │   │
     │   │   └── api/
     │   │       ├── auth/[...all]/route.ts  ← Better Auth Next.js API handler
-    │   │       ├── project/route.ts        ← Project creation and listing API
-    │   │       └── commits/route.ts        ← Commit listing and GitHub polling API
+    │   │       ├── project/route.ts        ← Project creation, commit polling, and RAG indexing API
+    │   │       └── commits/route.ts        ← Commit listing API
     │   │
     │   ├── components/
     │   │   ├── appsidebar.tsx     ← Dashboard Sidebar component
@@ -97,8 +99,9 @@ GitPulse/                          ← Monorepo root
     │   │   ├── utils.ts           ← cn() utility (clsx + tailwind-merge)
     │   │   ├── auth.ts            ← Better Auth server instance
     │   │   ├── auth-client.ts     ← Better Auth React client instance
-    │   │   ├── github.ts          ← Octokit GitHub API integration
-    │   │   └── gemini.ts          ← Google GenAI API integration
+    │   │   ├── github.ts          ← Octokit integration for fetching un-processed repository commits
+    │   │   ├── github-loader.ts   ← LangChain document loader and RAG indexing orchestration
+    │   │   └── gemini.ts          ← Google GenAI integration (Commit summarization & Text Embeddings)
     │   │
     │   ├── server/
     │   │   └── db.ts              ← Prisma client singleton
@@ -114,6 +117,7 @@ GitPulse/                          ← Monorepo root
     ├── next.config.js
     ├── next-env.d.ts              ← Auto-generated Next.js types (do not edit)
     ├── package.json
+    ├── test-octokit.js            ← Scratch script for testing octokit functionality
     ├── postcss.config.js
     ├── prettier.config.js
     ├── start-database.sh          ← Docker helper script for local PostgreSQL
@@ -135,7 +139,7 @@ The Next.js application. Everything inside here is the actual codebase.
 ---
 
 ### `prisma/`
-Holds the Prisma ORM schema. Configured for PostgreSQL and contains the Better Auth models (`user`, `session`, `account`, `verification`) as well as GitPulse models like `Project`. The Prisma client is generated into `node_modules/@prisma/client` during `postinstall`.
+Holds the Prisma ORM schema. Configured for PostgreSQL and contains the Better Auth models (`user`, `session`, `account`, `verification`) as well as GitPulse models (`Project`, `Commit`, `SourceCodeEmbedding`). The Prisma client is generated into `node_modules/@prisma/client` during `postinstall`.
 
 ---
 
@@ -154,6 +158,7 @@ Next.js **App Router** directory. Every folder with a `page.tsx` inside it becom
 | `app/auth/signup/` | `/auth/signup` | ✅ Fully functional (Email + password) |
 | `app/(protected)/` | `/QA`, `/create-project` | ✅ Protected layout group with Sidebar |
 | `app/api/auth/[...all]/` | `/api/auth/*` | ✅ Better Auth API handler active |
+| `app/api/project/` | `/api/project` | ✅ API for project creation, commit polling, and background RAG indexing |
 
 ---
 
@@ -174,7 +179,10 @@ Utility functions and singleton instances shared across the application.
 - `auth.ts` — **Server-side** Better Auth configuration and instance.
 - `auth-client.ts` — **Client-side** Better Auth configuration and instance.
 - `github.ts` — Octokit integration for fetching un-processed repository commits.
-- `gemini.ts` — Google GenAI integration for batch AI commit summarization.
+- `github-loader.ts` — LangChain document loading, chunking, and RAG indexing orchestration. Delegates all Gemini API calls (embedding + 429/503 handling) to `gemini.ts`.
+- `gemini.ts` — Google GenAI integration. Contains:
+  - `aiSummariseCommits()` — single-key batch commit summarization via `gemini-3.6-flash`.
+  - `generateEmbedding()` — multi-key round-robin embedding via `gemini-embedding-2` with transparent 429 key rotation and 503 exponential backoff. Key pool is built from `GEMINI_API_KEY_1` … `GEMINI_API_KEY_10` at module load.
 
 ---
 
@@ -200,6 +208,7 @@ Contains `globals.css` — the single global stylesheet. This is where Tailwind 
 | `src/components/providers.tsx` | TanStack React Query global provider wrapper. |
 | `src/app/(protected)/create-project/page.tsx` | UI for creating a new project with form integration. |
 | `src/app/api/auth/[...all]/route.ts` | The Better Auth API route handler. Automatically manages all auth requests. |
+| `src/app/api/project/route.ts` | Handles project creation, triggers `pollCommits` synchronously, and kicks off `indexGithubRepo` in the background. |
 | `src/env.js` | Type-safe environment variable validation using `@t3-oss/env-nextjs` and Zod. |
 | `src/server/db.ts` | Exports the `db` Prisma client singleton. |
 | `src/lib/auth.ts` | Better Auth server configuration. |
@@ -209,7 +218,7 @@ Contains `globals.css` — the single global stylesheet. This is where Tailwind 
 
 | File | Purpose |
 |------|---------|
-| `prisma/schema.prisma` | Defines the database schema. Contains `User`, `Project`, `Session`, `Account`, `Verification`, and `Commit` models. |
+| `prisma/schema.prisma` | Defines the database schema. Contains auth models + `Project`, `UserToProject`, `Commit`, and `SourceCodeEmbedding` with `pgvector`. |
 
 ---
 
@@ -222,27 +231,27 @@ Browser / Client
        │       │
        │       ▼ (HTTP)
        │   Better Auth API (src/app/api/auth/[...all]/route.ts)
-       │       │
-       │       ▼
-       │   Better Auth Server (src/lib/auth.ts)
-       │       │
-       │       ▼
-       │   Prisma Adapter
-       │       │
-       │       ▼
-       │   Prisma Client (src/server/db.ts)
-       │       │
-       │       ▼
-       │   PostgreSQL Database
        │
-       ▼ (Page loads / RSC)
-Next.js App Router (src/app/)
+       ├── Project Creation (src/app/(protected)/create-project/page.tsx)
+       │       │
+       │       ▼ (HTTP)
+       │   Project API (src/app/api/project/route.ts)
+       │       │
+       │       ├── Sync  → Octokit + Gemini API (pollCommits)
+       │       └── Async → LangChain + Gemini Embedding Pool (indexGithubRepo)
+       │                        │
+       │                        ▼
+       │                   gemini.ts — Key Pool (GEMINI_API_KEY_1…10)
+       │                        │  429 quota → rotate key
+       │                        │  503 → exponential backoff
+       │                        ▼
+       │                   Gemini Embedding API (gemini-embedding-2, 768-d)
        │
-       ├── Server Components (RSC) → check auth via `auth.api.getSession()`
-       │       └── direct access to Prisma or server actions
+       ▼ (Prisma)
+   Prisma Client (src/server/db.ts)
        │
-       └── Client Components ("use client") → hydrate in browser
-               └── call Next.js Route Handlers via `fetch()`
+       ▼
+   PostgreSQL Database (with pgvector)
 ```
 
 ---
@@ -267,8 +276,13 @@ Used for client-side data fetching, caching, and state synchronization (e.g., fe
 ### shadcn / Base UI
 Accessible UI components copied directly into `src/components/ui/`.
 
-### Prisma 6
-ORM for PostgreSQL. The schema lives in `prisma/schema.prisma`.
+### AI & Integrations
+- **Google GenAI (`@google/genai`)**: Used for commit summarization (`gemini-3.6-flash`) and 768-dimensional vector embeddings (`gemini-embedding-2`). Embedding calls use a **multi-key pool** (up to 10 keys) with round-robin rotation and transparent 429/503 error handling inside `gemini.ts`.
+- **LangChain (`@langchain/community`)**: Used for robust repository loading (`GithubRepoLoader`) and intelligent chunking (`RecursiveCharacterTextSplitter`).
+- **Octokit (`octokit`)**: Used to interact directly with the GitHub API for fetching commits and diffs.
+
+### Prisma 6 & PostgreSQL (pgvector)
+ORM for PostgreSQL. The schema lives in `prisma/schema.prisma`. Uses `pgvector` for storing and querying AI embeddings.
 
 ---
 
@@ -309,6 +323,7 @@ The database contains the core Better Auth models + standard GitPulse models:
 - `Project` — Custom GitPulse table for workspace projects
 - `UserToProject` — Many-to-many junction table linking Users to Projects
 - `Commit` — Stores individual Git commits with AI-generated summaries
+- `SourceCodeEmbedding` — Stores chunked repository code and `768`-dimensional pgvector embeddings.
 
 ---
 
@@ -320,21 +335,27 @@ See section 3 for details. The `dev` script in `package.json` is explicitly pinn
 
 ## 10. Environment Variables
 
-The following environment variables are strictly validated by `src/env.js` at runtime. **All secrets are server-side only.**
+The following environment variables are used at runtime. Variables marked ✅ are strictly validated by `src/env.js`. Gemini keys are accessed directly via `process.env` inside `gemini.ts` and are **not** in the Zod schema.
 
-| Variable | Purpose |
-|----------|---------|
-| `DATABASE_URL` | PostgreSQL connection string (pooled). |
-| `BETTER_AUTH_SECRET` | High-entropy secret for encrypting cookies. |
-| `BETTER_AUTH_URL` | Base URL of the application. |
-| `GOOGLE_CLIENT_ID/SECRET` | OAuth credentials for Google Sign-In. |
-| `GITHUB_CLIENT_ID/SECRET` | OAuth credentials for GitHub Sign-In. |
-| `GEMINI_API_KEY` | Key for Google GenAI used in commit summarization. |
+| Variable | Validated | Purpose |
+|----------|-----------|--------|
+| `DATABASE_URL` | ✅ | PostgreSQL connection string (pooled). |
+| `DIRECT_URL` | ✅ | PostgreSQL connection string for migrations (unpooled). |
+| `BETTER_AUTH_SECRET` | ✅ | High-entropy secret for encrypting cookies. |
+| `BETTER_AUTH_URL` | ✅ | Base URL of the application. |
+| `GOOGLE_CLIENT_ID/SECRET` | ✅ | OAuth credentials for Google Sign-In. |
+| `GITHUB_CLIENT_ID/SECRET` | ✅ | OAuth credentials for GitHub Sign-In. |
+| `GITHUB_TOKEN` | — | Optional GitHub PAT for loading private repos / raising API rate limits. |
+| `GEMINI_API_KEY_1` … `GEMINI_API_KEY_10` | — | Embedding key pool. Each key should be from a **different GCP project** for independent 30K TPM quotas. Supports 1–10 keys; pool size is logged at startup. |
+| `GEMINI_API_KEY` | — | Legacy single-key fallback. Used for commit summarization if no `GEMINI_API_KEY_1` is set. |
 
 ---
 
 ## 11. Planned Next Steps
 
-1. **Dashboard Data Integration** — ✅ Connect the `/create-project` form to a REST endpoint to insert into the `Project` database model. (Implemented using Next.js Route Handlers and TanStack React Query for live sidebar updates).
-2. **AI Commit Summarization** — ✅ Complete end-to-end flow using GitHub Octokit and Gemini 1.5 Flash to automatically index and summarize new project commits.
-3. **Dashboard Overview UI** — Building out the real dashboard data tables replacing placeholders (Commit log is complete, more sections to follow).
+1. **Dashboard Data Integration** — ✅ Connect the `/create-project` form to a REST endpoint to insert into the `Project` database model.
+2. **AI Commit Summarization** — ✅ End-to-end flow using Octokit + `gemini-3.6-flash` to automatically index and summarize new project commits.
+3. **Repository Vector Search (RAG)** — ✅ `indexGithubRepo` using LangChain to chunk and embed source code into `SourceCodeEmbedding` via pgvector.
+4. **Gemini Embedding Key Rotation** — ✅ 5-key (up to 10) round-robin pool in `gemini.ts` eliminating 429 TPM quota errors on large repos.
+5. **Q&A Chat Interface** — **Next up:** Build the chat UI where users can ask questions about the indexed codebase, utilizing pgvector similarity search against the stored embeddings.
+6. **Dashboard Overview UI** — Expand dashboard data sections (Commit log is complete; more sections to follow).

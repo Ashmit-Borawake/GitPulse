@@ -3,21 +3,12 @@ import pLimit from "p-limit";
 import { GithubRepoLoader } from "@langchain/community/document_loaders/web/github";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { type Document } from "@langchain/core/documents";
-import { summariseCode, generateEmbedding } from "./gemini";
+import { generateEmbedding } from "./gemini";
 import { db } from "@/server/db";
 
 // ---------------------------------------------------------------------------
 // RAG / Indexing constants
 // ---------------------------------------------------------------------------
-
-/** Maximum number of files sent to Gemini in a single summarisation batch. */
-const MAX_FILES_PER_BATCH = 10;
-
-/**
- * Maximum total character count of all file contents within a single
- * summarisation batch.
- */
-const MAX_BATCH_INPUT_CHARS = 80_000;
 
 /**
  * Chunk size in characters for RecursiveCharacterTextSplitter.
@@ -45,7 +36,6 @@ const MAX_EMBED_BATCH_SIZE = 50;
 // ---------------------------------------------------------------------------
 
 type EmbeddingRecord = {
-  summary: string;
   embedding: number[];
   sourceCode: string;
   fileName: string;
@@ -69,69 +59,108 @@ export const loadGithubRepo = async (
     githubUrl: string,
     githubToken?: string
 ) => {
+    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+    const token = githubToken || process.env.GITHUB_TOKEN;
+
+    console.log(
+        `[GitHub Loader] Authentication: ${token ? "authenticated" : "unauthenticated"}`
+    );
+
     const loader = new GithubRepoLoader(githubUrl, {
-        accessToken: githubToken ?? "",
+        // Only pass accessToken if a real token was provided.
+        // An empty string causes a malformed Authorization header and
+        // wastes the unauthenticated rate-limit quota (60 req/hr).
+        ...(token ? { accessToken: token } : {}),
         branch: "main",
         ignoreFiles: [
-        // Package manager lock files
-        "package-lock.json",
-        "yarn.lock",
-        "pnpm-lock.yaml",
-        "bun.lockb",
+            // Package manager lock files
+            "package-lock.json",
+            "yarn.lock",
+            "pnpm-lock.yaml",
+            "bun.lockb",
+            "bun.lock",
 
-        // Build / generated output
-        "dist",
-        "build",
-        ".next",
-        "out",
-        ".turbo",
-        ".cache",
+            // Build / generated output
+            "dist",
+            "build",
+            ".next",
+            "out",
+            ".turbo",
+            ".cache",
+            ".vercel",
 
-        // Dependencies
-        "node_modules",
+            // Dependencies — individual files inside node_modules that
+            // might slip through (directory exclusion is handled by ignorePaths)
+            "node_modules",
 
-        // Environment / secrets
-        ".env",
-        ".env.local",
-        ".env.development",
-        ".env.production",
+            // Environment / secrets
+            ".env",
+            ".env.local",
+            ".env.development",
+            ".env.production",
 
-        // IDE / OS files
-        ".DS_Store",
-        "Thumbs.db",
-        ".idea",
-        ".vscode",
+            // IDE / OS files
+            ".DS_Store",
+            "Thumbs.db",
+            ".idea",
+            ".vscode",
 
-        // Coverage / test-generated files
-        "coverage",
-        ".nyc_output",
+            // Coverage / test-generated files
+            "coverage",
+            ".nyc_output",
 
-        // Logs
-        "*.log",
+            // Logs
+            "*.log",
 
-        // Minified / bundled files
-        "*.min.js",
-        "*.min.css",
-        "*.map",
+            // Minified / bundled files
+            "*.min.js",
+            "*.min.css",
+            "*.map",
 
-        // Binary / media files
-        "*.png",
-        "*.jpg",
-        "*.jpeg",
-        "*.gif",
-        "*.webp",
-        "*.ico",
-        "*.mp3",
-        "*.mp4",
-        "*.mov",
-        "*.avi",
-        "*.zip",
-        "*.tar",
-        "*.gz",
-        "*.pdf",
-    ],
+            // Binary / media files
+            "*.png",
+            "*.jpg",
+            "*.jpeg",
+            "*.gif",
+            "*.webp",
+            "*.ico",
+            "*.svg",
+            "*.woff",
+            "*.woff2",
+            "*.ttf",
+            "*.eot",
+
+            // Audio / video files
+            "*.mp3",
+            "*.mp4",
+            "*.mov",
+            "*.avi",
+            "*.webm",
+
+            // Archives
+            "*.zip",
+            "*.tar",
+            "*.gz",
+            "*.pdf",
+        ],
+        // Exclude node_modules directories at ANY depth.
+        // ignorePaths is the correct option for directory-level exclusion;
+        // ignoreFiles only matches individual filenames/extensions.
+        ignorePaths: [
+            "node_modules",
+            "**/node_modules",
+            "**/package-lock.json",
+            "**/yarn.lock",
+            "**/pnpm-lock.yaml",
+            "**/bun.lock",
+            "**/bun.lockb",
+            "**/.DS_Store",
+        ],
         recursive: true,
-        unknown: "warn",
+        // Silently ignore unknown/binary files instead of emitting a warning
+        // for every file — this eliminates noise in the server logs.
+        unknown: "ignore",
+        // 5 concurrent requests as requested.
         maxConcurrency: 5,
     });
 
@@ -145,14 +174,15 @@ export const loadGithubRepo = async (
 // ---------------------------------------------------------------------------
 
 /**
- * Orchestrates the full pipeline for a set of loaded repository documents:
+ * Orchestrates the full RAG indexing pipeline for a set of loaded repository documents:
  *
- * 1. Dynamically batch documents → call summariseCode once per batch.
- * 2. Build a filePath → summary map from all returned summaries.
- * 3. Split each document's source code into overlapping chunks.
- * 4. Attach the file-level summary to every chunk from that file.
- * 5. Generate one 768-d embedding per chunk (using the chunk content).
- * 6. Return one EmbeddingRecord per chunk.
+ * 1. Split each document into overlapping chunks with RecursiveCharacterTextSplitter.
+ * 2. Generate one 768-d embedding per chunk from the actual source-code content.
+ * 3. Return one EmbeddingRecord per chunk.
+ *
+ * No Gemini text-generation is performed here — only the embedding API is used.
+ * This preserves implementation-level detail (exact identifiers, function names,
+ * logic) for accurate code retrieval at query time.
  *
  * @param docs - All documents loaded from the GitHub repository.
  * @returns Array of EmbeddingRecord objects ready for DB insertion.
@@ -161,68 +191,7 @@ export async function generateEmbeddings(
   docs: Document[]
 ): Promise<EmbeddingRecord[]> {
   // -------------------------------------------------------------------------
-  // Step 1 - Dynamic batching + summarisation
-  // -------------------------------------------------------------------------
-  console.log(`[Summary] Summarising ${docs.length} files...`);
-
-  const batches: Document[][] = [];
-  let currentBatch: Document[] = [];
-  let currentBatchChars = 0;
-
-  for (const doc of docs) {
-    const docChars = doc.pageContent.length;
-    const wouldExceedFileCount = currentBatch.length >= MAX_FILES_PER_BATCH;
-    const wouldExceedCharLimit =
-      currentBatch.length > 0 &&
-      currentBatchChars + docChars > MAX_BATCH_INPUT_CHARS;
-
-    if (wouldExceedFileCount || wouldExceedCharLimit) {
-      batches.push(currentBatch);
-      currentBatch = [];
-      currentBatchChars = 0;
-    }
-
-    currentBatch.push(doc);
-    currentBatchChars += docChars;
-  }
-
-  if (currentBatch.length > 0) {
-    batches.push(currentBatch);
-  }
-
-  const totalBatches = batches.length;
-  console.log(
-    `[Summary] ${docs.length} files -> ${totalBatches} batch(es) for Gemini summarisation`
-  );
-
-  const summaryMap = new Map<string, string>();
-
-  for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
-    const batch = batches[batchIndex]!;
-    console.log(
-      `[Summary] Processing batch ${batchIndex + 1}/${totalBatches} (${batch.length} files)`
-    );
-
-    try {
-      const batchSummaries = await summariseCode(batch);
-      for (const { filePath, summary } of batchSummaries) {
-        summaryMap.set(filePath, summary);
-      }
-      console.log(`[Summary] Batch ${batchIndex + 1} complete`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(
-        `[Summary] Batch ${batchIndex + 1}/${totalBatches} failed: ${message}`
-      );
-    }
-  }
-
-  console.log(
-    `[Summary] All ${docs.length} files summarised in ${totalBatches} batch(es)`
-  );
-
-  // -------------------------------------------------------------------------
-  // Step 2 - Chunking
+  // Step 1 - Chunking
   // -------------------------------------------------------------------------
   const splitter = new RecursiveCharacterTextSplitter({
     chunkSize: CHUNK_SIZE,
@@ -232,7 +201,6 @@ export async function generateEmbeddings(
   type ChunkMeta = {
     filePath: string;
     fileName: string;
-    summary: string;
     chunkIndex: number;
     content: string;
   };
@@ -243,14 +211,6 @@ export async function generateEmbeddings(
     const filePath =
       (doc.metadata?.source as string | undefined) ?? "unknown";
     const fileName = path.basename(filePath);
-    const summary = summaryMap.get(filePath);
-
-    if (!summary) {
-      console.warn(
-        `[Chunking] No summary found for "${filePath}" - skipping this file`
-      );
-      continue;
-    }
 
     let chunks: Document[];
     try {
@@ -267,7 +227,6 @@ export async function generateEmbeddings(
       allChunks.push({
         filePath,
         fileName,
-        summary,
         chunkIndex,
         content: chunk.pageContent,
       });
@@ -284,7 +243,13 @@ export async function generateEmbeddings(
   }
 
   // -------------------------------------------------------------------------
-  // Step 3 - Embedding (chunked into MAX_EMBED_BATCH_SIZE sub-batches)
+  // Step 2 - Embedding (chunked into MAX_EMBED_BATCH_SIZE sub-batches)
+  //
+  // Each chunk is embedded as:
+  //   "File: <filePath>\nName: <fileName>\n\n<source code>"
+  // This gives the embedding model lightweight file-location context without
+  // calling Gemini's text-generation API. The raw source code is stored
+  // separately in `content` for retrieval during Q&A.
   //
   // Sending every chunk in one request risks hitting API size limits on large
   // repos. We split chunks into sub-batches and call generateEmbedding once
@@ -297,12 +262,14 @@ export async function generateEmbeddings(
   // Pre-allocate the full vector array so we can write at known offsets.
   const embeddingVectors = Array.from<number[]>({ length: allChunks.length });
 
-  // Build sub-batches: [ [chunk0, chunk1, ...], [chunk50, ...], ... ]
-  const embedBatches: { globalIndex: number; content: string }[][] = [];
+  // Build sub-batches. Each item carries the formatted embedding text so that
+  // both the normal path and the fallback path use exactly the same input.
+  const embedBatches: { globalIndex: number; embeddingText: string }[][] = [];
+  
   for (let i = 0; i < allChunks.length; i += MAX_EMBED_BATCH_SIZE) {
     const slice = allChunks.slice(i, i + MAX_EMBED_BATCH_SIZE).map((c, j) => ({
       globalIndex: i + j,
-      content: c.content,
+      embeddingText: `title: ${c.filePath} | text: ${c.content}`,
     }));
     embedBatches.push(slice);
   }
@@ -311,10 +278,18 @@ export async function generateEmbeddings(
 
   for (let bi = 0; bi < embedBatches.length; bi++) {
     const subBatch = embedBatches[bi]!;
-    const texts = subBatch.map((s) => s.content);
+    const texts = subBatch.map((s) => s.embeddingText);
+
+    // -----------------------------------------------------------------------
+    // generateEmbedding() (gemini.ts) handles all transient errors internally:
+    //   - 429 quota/rate-limit → key rotation across the pool; 61s sleep if all exhausted
+    //   - 503 UNAVAILABLE      → exponential backoff (1s, 2s, 4s)
+    // Any error that ultimately propagates here is non-recoverable at the
+    // batch level — fall through to the per-chunk fallback below.
+    // -----------------------------------------------------------------------
+    let batchSucceeded = false;
 
     try {
-      // Happy path: one Gemini embedContent request for this sub-batch.
       const vectors = await generateEmbedding(texts);
       for (let j = 0; j < subBatch.length; j++) {
         embeddingVectors[subBatch[j]!.globalIndex] = vectors[j]!;
@@ -322,21 +297,25 @@ export async function generateEmbeddings(
       console.log(
         `[Embedding] Sub-batch ${bi + 1}/${totalEmbedBatches} complete (${subBatch.length} chunks)`
       );
-    } catch (batchErr) {
-      // Fallback: concurrency-limited individual requests for this sub-batch.
-      const message =
-        batchErr instanceof Error ? batchErr.message : String(batchErr);
+      batchSucceeded = true;
+    } catch (err) {
+      // generateEmbedding() exhausted all internal retries/keys — fall back
+      // to concurrency-limited individual requests for this sub-batch.
+      const message = err instanceof Error ? err.message : String(err);
       console.warn(
         `[Embedding] Sub-batch ${bi + 1}/${totalEmbedBatches} failed (${message}). ` +
           `Falling back to concurrency-limited individual requests (limit=${EMBEDDING_CONCURRENCY})`
       );
+    }
 
+    if (!batchSucceeded) {
+      // Fallback: concurrency-limited individual requests for this sub-batch.
       const limit = pLimit(EMBEDDING_CONCURRENCY);
       const fallbackResults = await Promise.all(
         subBatch.map((item) =>
           limit(async () => {
             try {
-              const [vector] = await generateEmbedding([item.content]);
+              const [vector] = await generateEmbedding([item.embeddingText]);
               return { globalIndex: item.globalIndex, vector: vector! };
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
@@ -358,7 +337,6 @@ export async function generateEmbeddings(
   console.log(`[Embedding] Generated ${embeddingVectors.length} vectors`);
 
   const embeddingRecords: EmbeddingRecord[] = allChunks.map((chunk, i) => ({
-    summary: chunk.summary,
     embedding: embeddingVectors[i]!,
     sourceCode: chunk.content,
     fileName: chunk.fileName,
@@ -378,10 +356,13 @@ export async function generateEmbeddings(
  *
  * Pipeline:
  *   GitHub URL -> GithubRepoLoader -> LangChain Documents
- *     -> dynamic summarisation batches (Gemini)
- *     -> RecursiveCharacterTextSplitter (chunks)
- *     -> Gemini embeddings (text-embedding-004, 768-d)
- *     -> PostgreSQL SourceCodeEmbedding rows (two-step Prisma + $executeRaw)
+ *     -> RecursiveCharacterTextSplitter (source-code chunks)
+ *     -> Gemini Embedding API (gemini-embedding-2, 768-d vectors)
+ *     -> PostgreSQL SourceCodeEmbedding rows (Prisma + $executeRaw for vector)
+ *
+ * No Gemini text-generation is used during indexing — only the embedding API.
+ * The actual source-code content is embedded directly, preserving identifiers,
+ * function names, and implementation details for accurate retrieval.
  *
  * @param projectId   - The database ID of the project being indexed.
  * @param githubUrl   - The full GitHub repository URL.
@@ -406,7 +387,6 @@ export const indexGithubRepo = async (
     try {
       const record = await db.sourceCodeEmbedding.create({
         data: {
-          summary: embedding.summary,
           content: embedding.sourceCode,
           fileName: embedding.fileName,
           filePath: embedding.filePath,

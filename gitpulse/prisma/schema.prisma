@@ -129,7 +129,6 @@ model SourceCodeEmbedding {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  summary    String?
   content    String
   fileName   String
   filePath   String
