@@ -270,10 +270,10 @@ export const aiSummariseCommits = async (
  * Accepts multiple texts and returns one vector per text in the same order.
  *
  * Internally manages a pool of up to 10 API keys (GEMINI_API_KEY_1 … _10)
- * with round-robin rotation and transparent 429 quota-exhaustion handling:
+ * with round-robin rotation and transparent 429/503 handling:
  *
  *   - 429 quota/rate-limit  → rotate to next key; sleep 61s if all exhausted
- *   - 503 UNAVAILABLE       → exponential backoff (1s, 2s, 4s)
+ *   - 503 UNAVAILABLE       → exponential backoff (1s, 2s, 4s), rotate to next key if retries fail
  *   - Any other error       → re-thrown immediately
  *
  * The public API is unchanged: callers pass texts, receive vectors.
@@ -291,6 +291,7 @@ export async function generateEmbedding(texts: string[]): Promise<number[][]> {
   // updated once a key succeeds (or after a 61s sleep resets).
   const startIndex = embeddingKeyIndex % poolSize;
   let triedKeyCount = 0; // local offset within this call — never touches global
+  let failed503Count = 0; // tracks how many keys failed with 503 in current cycle
 
   // gemini-embedding-2 requires separate Content objects to return separate embeddings
   const formattedContents = texts.map((text) => ({
@@ -357,11 +358,21 @@ export async function generateEmbedding(texts: string[]): Promise<number[][]> {
       return vectors;
 
     } catch (err) {
-      // ── 429 quota/rate-limit: rotate to next key ─────────────────────────
-      if (isRateLimitError(err)) {
-        console.warn(
-          `[Gemini] Key ${currentKeyIdx + 1} quota-limited (429), rotating…`
-        );
+      // ── 429 or 503: rotate to next key ─────────────────────────
+      const is429 = isRateLimitError(err);
+      const is503 = err instanceof ApiError && err.status === 503;
+
+      if (is429 || is503) {
+        if (is429) {
+          console.warn(
+            `[Gemini] Key ${currentKeyIdx + 1} quota-limited (429), rotating…`
+          );
+        } else {
+          console.warn(
+            `[Gemini] Key ${currentKeyIdx + 1} unavailable (503) after ${MAX_RETRIES} attempts, rotating…`
+          );
+          failed503Count++;
+        }
         triedKeyCount++;
 
         if (triedKeyCount < poolSize) {
@@ -369,12 +380,21 @@ export async function generateEmbedding(texts: string[]): Promise<number[][]> {
           continue;
         }
 
-        // All keys exhausted — sleep 61s and reset local offset
+        if (failed503Count === poolSize) {
+          // All keys exhausted and ALL were 503 - throw to fail
+          console.error(
+            `[Gemini] All ${poolSize} embedding key(s) failed with 503. Failing operation.`
+          );
+          throw err;
+        }
+
+        // All keys exhausted, but not all were 503 — sleep 61s and reset local offset
         console.warn(
-          `[Gemini] All ${poolSize} embedding key(s) quota-limited. Sleeping 61s for window reset…`
+          `[Gemini] All ${poolSize} embedding key(s) exhausted (mixed 429/503). Sleeping 61s for window reset…`
         );
         await sleep(61_000);
         triedKeyCount = 0; // reset local offset; retry from startIndex
+        failed503Count = 0; // reset 503 tracking
         continue;
       }
 

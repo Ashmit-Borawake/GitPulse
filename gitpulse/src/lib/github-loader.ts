@@ -1,5 +1,4 @@
 import path from "path";
-import pLimit from "p-limit";
 import { GithubRepoLoader } from "@langchain/community/document_loaders/web/github";
 import { RecursiveCharacterTextSplitter } from "@langchain/textsplitters";
 import { type Document } from "@langchain/core/documents";
@@ -18,11 +17,6 @@ const CHUNK_SIZE = 1500;
 
 /** Character overlap between adjacent chunks. */
 const CHUNK_OVERLAP = 150;
-
-/**
- * Maximum concurrent embedding requests used as fallback when a sub-batch fails.
- */
-const EMBEDDING_CONCURRENCY = 5;
 
 /**
  * Maximum number of chunks sent to the Gemini embedding API in one request.
@@ -262,8 +256,7 @@ export async function generateEmbeddings(
   // Pre-allocate the full vector array so we can write at known offsets.
   const embeddingVectors = Array.from<number[]>({ length: allChunks.length });
 
-  // Build sub-batches. Each item carries the formatted embedding text so that
-  // both the normal path and the fallback path use exactly the same input.
+  // Build sub-batches. Each item carries the formatted embedding text.
   const embedBatches: { globalIndex: number; embeddingText: string }[][] = [];
   
   for (let i = 0; i < allChunks.length; i += MAX_EMBED_BATCH_SIZE) {
@@ -283,12 +276,10 @@ export async function generateEmbeddings(
     // -----------------------------------------------------------------------
     // generateEmbedding() (gemini.ts) handles all transient errors internally:
     //   - 429 quota/rate-limit → key rotation across the pool; 61s sleep if all exhausted
-    //   - 503 UNAVAILABLE      → exponential backoff (1s, 2s, 4s)
+    //   - 503 UNAVAILABLE      → exponential backoff, then key rotation
     // Any error that ultimately propagates here is non-recoverable at the
-    // batch level — fall through to the per-chunk fallback below.
+    // batch level — throw to fail the repository indexing operation.
     // -----------------------------------------------------------------------
-    let batchSucceeded = false;
-
     try {
       const vectors = await generateEmbedding(texts);
       for (let j = 0; j < subBatch.length; j++) {
@@ -297,40 +288,12 @@ export async function generateEmbeddings(
       console.log(
         `[Embedding] Sub-batch ${bi + 1}/${totalEmbedBatches} complete (${subBatch.length} chunks)`
       );
-      batchSucceeded = true;
     } catch (err) {
-      // generateEmbedding() exhausted all internal retries/keys — fall back
-      // to concurrency-limited individual requests for this sub-batch.
+      // generateEmbedding() exhausted all internal retries/keys.
       const message = err instanceof Error ? err.message : String(err);
-      console.warn(
-        `[Embedding] Sub-batch ${bi + 1}/${totalEmbedBatches} failed (${message}). ` +
-          `Falling back to concurrency-limited individual requests (limit=${EMBEDDING_CONCURRENCY})`
+      throw new Error(
+        `[Embedding] Sub-batch ${bi + 1}/${totalEmbedBatches} failed: ${message}`
       );
-    }
-
-    if (!batchSucceeded) {
-      // Fallback: concurrency-limited individual requests for this sub-batch.
-      const limit = pLimit(EMBEDDING_CONCURRENCY);
-      const fallbackResults = await Promise.all(
-        subBatch.map((item) =>
-          limit(async () => {
-            try {
-              const [vector] = await generateEmbedding([item.embeddingText]);
-              return { globalIndex: item.globalIndex, vector: vector! };
-            } catch (err) {
-              const msg = err instanceof Error ? err.message : String(err);
-              const chunk = allChunks[item.globalIndex]!;
-              throw new Error(
-                `[Embedding] Failed to embed chunk ${item.globalIndex} of "${chunk.filePath}": ${msg}`
-              );
-            }
-          })
-        )
-      );
-
-      for (const { globalIndex, vector } of fallbackResults) {
-        embeddingVectors[globalIndex] = vector;
-      }
     }
   }
 
