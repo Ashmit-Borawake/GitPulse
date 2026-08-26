@@ -403,3 +403,225 @@ export async function generateEmbedding(texts: string[]): Promise<number[][]> {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Code Q&A / Retrieval
+// ---------------------------------------------------------------------------
+
+import { db } from '@/server/db';
+
+/**
+ * Represents a single source-code chunk retrieved from pgvector.
+ * The `sourceCode` field maps to the `content` column in SourceCodeEmbedding.
+ */
+type RetrievedCodeChunk = {
+  fileName: string;
+  filePath: string;
+  sourceCode: string;
+  chunkIndex: number;
+  similarity: number;
+};
+
+/**
+ * Retrieves the top-10 most relevant source-code chunks for a user question
+ * using pgvector cosine similarity against the `embedding` column in
+ * `SourceCodeEmbedding`.
+ *
+ * Query embedding format (asymmetric retrieval for gemini-embedding-2):
+ *   "task: code retrieval | query: <question>"
+ *
+ * Document embedding format (already stored at indexing time):
+ *   "title: <filePath> | text: <source code>"
+ *
+ * @param question  - The raw user question.
+ * @param projectId - The project whose embeddings to search.
+ * @returns Array of up to 10 chunks ordered by similarity descending.
+ */
+async function retrieveRelevantCode(
+  question: string,
+  projectId: string,
+): Promise<RetrievedCodeChunk[]> {
+  // 1. Format the query text for asymmetric code retrieval.
+  const queryText = `task: code retrieval | query: ${question}`;
+
+  // 2. Embed the query using the existing pool infrastructure (single-item array).
+  const [queryVector] = await generateEmbedding([queryText]);
+  if (!queryVector) {
+    throw new Error('[retrieveRelevantCode] Failed to generate query embedding.');
+  }
+
+  // 3. Format as pgvector literal.
+  const vectorQuery = `[${queryVector.join(',')}]`;
+
+  // 4. Raw SQL similarity search — parameterized to prevent SQL injection.
+  //    projectId and vectorQuery are the only dynamic values; the user question
+  //    is NEVER interpolated into SQL.
+  type RawRow = {
+    fileName: string;
+    filePath: string;
+    content: string;
+    chunkIndex: number;
+    similarity: number;
+  };
+
+  const rows = await db.$queryRaw<RawRow[]>`
+    SELECT
+      "fileName",
+      "filePath",
+      "content",
+      "chunkIndex",
+      1 - ("embedding" <=> ${vectorQuery}::vector) AS similarity
+    FROM "SourceCodeEmbedding"
+    WHERE
+      "projectId" = ${projectId}
+      AND 1 - ("embedding" <=> ${vectorQuery}::vector) > 0.5
+    ORDER BY similarity DESC
+    LIMIT 10
+  `;
+
+  return rows.map((row) => ({
+    fileName: row.fileName,
+    filePath: row.filePath,
+    sourceCode: row.content,
+    chunkIndex: row.chunkIndex,
+    similarity: Number(row.similarity),
+  }));
+}
+
+/**
+ * Builds a human-readable context string from retrieved code chunks.
+ * Each chunk is presented with its file path and source code separated by `---`.
+ */
+function buildCodeContext(chunks: RetrievedCodeChunk[]): string {
+  if (chunks.length === 0) return '';
+
+  return chunks
+    .map(
+      (chunk) =>
+        `source: ${chunk.filePath}\ncode content:\n${chunk.sourceCode}`,
+    )
+    .join('\n\n---\n\n');
+}
+
+/**
+ * Lightweight reference shape sent to the frontend.
+ * Contains only the metadata needed to identify and display retrieved files —
+ * source code is intentionally excluded to keep the header small.
+ */
+export type FileReference = {
+  fileName: string;
+  filePath: string;
+  chunkIndex: number;
+  similarity: number;
+};
+
+/**
+ * Return type of `askQuestionWithContext`.
+ * Carries both the streaming answer body and the lightweight file references
+ * derived from the actual pgvector retrieval results.
+ */
+export type AskQuestionResult = {
+  stream: ReadableStream<Uint8Array>;
+  filesReferences: FileReference[];
+};
+
+/**
+ * Full RAG Q&A pipeline:
+ *   1. Embed the user query.
+ *   2. Retrieve relevant code chunks via pgvector.
+ *   3. Derive lightweight file references from the chunks (no second query).
+ *   4. Build a context string.
+ *   5. Stream a Gemini answer grounded in the retrieved context.
+ *
+ * Returns `{ stream, filesReferences }` where:
+ *   - `stream`          — native ReadableStream<Uint8Array> for the HTTP body
+ *   - `filesReferences` — lightweight metadata about the retrieved chunks
+ *
+ * @param question  - The user's question.
+ * @param projectId - The project to search.
+ */
+export async function askQuestionWithContext(
+  question: string,
+  projectId: string,
+): Promise<AskQuestionResult> {
+  // --- Step 1: Retrieve relevant code chunks (single retrieval pass) ---
+  const chunks = await retrieveRelevantCode(question, projectId);
+
+  // --- Step 2: Derive lightweight file references (no sourceCode, no second query) ---
+  const filesReferences: FileReference[] = chunks.map((c) => ({
+    fileName: c.fileName,
+    filePath: c.filePath,
+    chunkIndex: c.chunkIndex,
+    similarity: c.similarity,
+  }));
+
+  // --- Step 3: Build context string from the same chunks ---
+  const context = buildCodeContext(chunks);
+
+  // --- Step 4: Build the final prompt ---
+  const prompt = `You are an AI code assistant who answers questions about the codebase.
+Your target audience is a technical intern who is new to the codebase.
+
+AI assistant is a brand new, powerful, human-like artificial intelligence.
+
+The traits of AI include expert knowledge, helpfulness, cleverness, and articulateness.
+
+AI is a well-behaved and well-mannered individual.
+
+AI is always friendly, kind, and inspiring, and he is eager to provide vivid and thoughtful responses to the user.
+
+AI has the sum of all knowledge in their brain, and is able to accurately answer nearly any question about any topic in conversation.
+
+If the question is asking about code or a specific file, AI will provide the detailed answer, giving step by step instructions if needed.
+
+START CONTEXT BLOCK
+
+${context || 'No relevant code context was found for this question.'}
+
+END OF CONTEXT BLOCK
+
+START QUESTION
+
+${question}
+
+END OF QUESTION
+
+AI assistant will take into account any CONTEXT BLOCK that is provided in a conversation.
+
+If the context does not provide the answer to question, the AI assistant will say, "I'm sorry, but I don't know the answer to that question based on the available repository context."
+
+AI assistant will not apologize for previous responses, but instead will indicate new information was gained.
+
+AI assistant will not invent anything that is not drawn directly from the context.
+
+Answer in markdown syntax, with code snippets if needed. Be as detailed as possible when answering, making sure the answer is based on the provided context.`;
+
+  // --- Step 5: Start streaming generation ---
+  const geminiStream = await ai.models.generateContentStream({
+    model: SUMMARISE_MODEL, // gemini-3.6-flash
+    contents: [{ parts: [{ text: prompt }] }],
+  });
+
+  // --- Step 6: Convert Gemini async iterable → native ReadableStream ---
+  // controller.close() is called only on success.
+  // controller.error(err) is called on failure — no finally block.
+  const encoder = new TextEncoder();
+
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        for await (const chunk of geminiStream) {
+          const text = chunk.text;
+          if (text) {
+            controller.enqueue(encoder.encode(text));
+          }
+        }
+        controller.close();
+      } catch (err) {
+        controller.error(err);
+      }
+    },
+  });
+
+  return { stream, filesReferences };
+}

@@ -11,7 +11,8 @@ When joining a new project or reviewing a large codebase, developers often strug
 * **Commit Summaries:** Automatically fetches and explains recent commits in simple English, helping developers understand the progress and changes over time.
 * **Repository Indexing:** Intelligently reads and processes the entire codebase, automatically ignoring unnecessary build files and dependencies.
 * **AI-Powered Code Understanding:** Provides human-readable summaries of complex code files to make them easier to grasp.
-* **RAG-based Q&A:** Allows developers to chat directly with their codebase. You can ask specific questions like "How does the authentication work?" and get accurate answers based directly on the project's actual code.
+* **RAG-based Q&A:** Allows developers to chat directly with their codebase. You can ask specific questions like "How does the authentication work?" and get accurate, streamed answers grounded directly on the project's actual source code — not Gemini's general knowledge.
+* **File Reference Tracking:** When answering a question, GitPulse returns metadata about the exact retrieved code files (file name, path, chunk index, similarity score) that were used to construct the answer, available for future display in the UI.
 * **Quota-Resilient Embedding Pipeline:** Uses a pool of up to 10 Gemini API keys with automatic round-robin rotation, transparently recovering from 429 quota errors without interrupting the indexing process.
 
 ## 4. Technology Stack
@@ -32,8 +33,12 @@ When joining a new project or reviewing a large codebase, developers often strug
 GitPulse operates using two main flows:
 
 **The Q&A Flow (RAG):**
-`GitHub Repository → Load Files → Summarize Files → Chunk Code → Generate Embeddings → Store in pgvector → Retrieve Relevant Code → AI Answers`
-*First, the system downloads the code, breaks it into smaller pieces, and turns those pieces into searchable numbers (embeddings). When a user asks a question, the system performs a similarity search on the stored code embeddings to retrieve the most relevant code chunks, which are then provided to Gemini to generate the answer.*
+`GitHub Repository → Load Files → Chunk Code → Generate Embeddings (gemini-embedding-2) → Store in pgvector`
+`User Question → Query Embedding ("task: code retrieval | query: ...") → pgvector Similarity Search → Top-10 Relevant Code Chunks → Gemini 3.6 Flash → Streamed Answer`
+
+*First, the system downloads the code, breaks it into smaller pieces, and turns those pieces into searchable numbers (embeddings). When a user asks a question, the system formats the query using the asymmetric retrieval prefix and performs a cosine similarity search to retrieve the most relevant code chunks. These chunks are then provided to Gemini 3.6 Flash as a grounded context, which streams the answer back to the browser. The retrieved file references (fileName, filePath, chunkIndex, similarity) are sent in the `X-File-References` response header, separate from the streaming text body.*
+
+**Note:** GitPulse does NOT generate per-chunk LLM summaries during indexing. Source code is embedded and stored directly. This avoids consuming unnecessary Gemini generation API quota during repository indexing.
 
 **The Commit Flow:**
 `GitHub Repository → Fetch Recent Commits → Summarize Commits → Store in Database → Display on Dashboard`
@@ -73,3 +78,9 @@ It drastically reduces the time developers spend trying to understand unfamiliar
 
 **7. Why do you use multiple Gemini API keys for embeddings?**
 The Gemini free tier limits each API key (per GCP project) to 30,000 tokens per minute (TPM). A typical repository produces ~1,000+ code chunks, which can push ~33K+ tokens through the embedding API in under a minute — exceeding the limit. By maintaining a pool of up to 10 keys (each from a different GCP project with its own independent 30K TPM quota), the system distributes token usage across keys using round-robin rotation. If a key still hits its quota, it automatically rotates to the next one. If all keys are exhausted simultaneously, it sleeps 61 seconds for the quota window to reset, then retries — completely transparently to the rest of the application.
+
+**8. How does GitPulse stream the Q&A answer?**
+`gemini.ts` calls `ai.models.generateContentStream()` which returns a `@google/genai` async iterable. This is converted into a native web `ReadableStream<Uint8Array>` — with text chunks enqueued as they arrive and `controller.close()` called only on successful completion. The `/api/QA` route returns this as a standard HTTP `Response` with `Content-Type: text/plain`. The browser reads it via `res.body.getReader()` and `TextDecoder`, appending each streamed chunk directly to the answer state — producing a live typing effect without any third-party streaming libraries.
+
+**9. Why do you use a response header for file references instead of the response body?**
+The HTTP response body is already occupied by the raw streaming text of the Gemini answer. Switching the body to JSON would break the streaming behavior entirely. Instead, the lightweight file reference metadata (`fileName`, `filePath`, `chunkIndex`, `similarity`) is sent in the `X-File-References` response header as a JSON-encoded string. The frontend reads this header synchronously before starting to consume the body stream, so both pieces of information are available independently without interfering with each other.

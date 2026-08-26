@@ -1,8 +1,8 @@
 # GitPulse — Project Structure Reference
 
-> **Document status:** Current state as of the Gemini API Key Rotation implementation.
+> **Document status:** Current state as of the RAG Q&A Backend implementation (Phase 5 complete).
 > This document describes what **actually exists** in the repository right now.
-> It will need to be updated when new phases (Q&A chat interface, dashboard expansions, etc.) are implemented.
+> It will need to be updated when new phases (Q&A chat UI, file reference display, etc.) are implemented.
 
 ---
 
@@ -37,6 +37,7 @@ GitPulse/                          ← Monorepo root
 │   ├── 04_ANIMATIONS_AND_SCROLL.md
 │   ├── BETTER_AUTH_FLOW.md
 │   ├── GeminiKeyRoation.md        ← Gemini API key rotation design & implementation plan
+│   ├── RAG_RETRIEVAL_PROMPT.md    ← Implementation spec for the RAG Q&A backend
 │   ├── GITPULSE_PROJECT_STRUCTURE.md
 │   └── PROJECT_SUMMARY.md         ← High-level project overview & viva Q&A
 │
@@ -68,15 +69,17 @@ GitPulse/                          ← Monorepo root
     │   │   │   ├── QA/
     │   │   │   │   └── page.tsx   ← QA Page placeholder
     │   │   │   ├── dashboard/
-    │   │   │   │   ├── page.tsx          ← Dashboard main page
-    │   │   │   │   └── commit-log.tsx    ← UI component displaying AI summarized commits
+    │   │   │   │   ├── page.tsx              ← Dashboard main page
+    │   │   │   │   ├── commit-log.tsx        ← UI component displaying AI summarized commits
+    │   │   │   │   └── ask-question-card.tsx ← Q&A card: sends question to /api/QA, streams answer, stores file references
     │   │   │   └── create-project/
     │   │   │       └── page.tsx   ← Create project UI form
     │   │   │
     │   │   └── api/
     │   │       ├── auth/[...all]/route.ts  ← Better Auth Next.js API handler
     │   │       ├── project/route.ts        ← Project creation, commit polling, and RAG indexing API
-    │   │       └── commits/route.ts        ← Commit listing API
+    │   │       ├── commits/route.ts        ← Commit listing API
+    │   │       └── QA/route.ts             ← RAG Q&A API: validates request, calls gemini.ts, returns streaming Response + X-File-References header
     │   │
     │   ├── components/
     │   │   ├── appsidebar.tsx     ← Dashboard Sidebar component
@@ -101,7 +104,7 @@ GitPulse/                          ← Monorepo root
     │   │   ├── auth-client.ts     ← Better Auth React client instance
     │   │   ├── github.ts          ← Octokit integration for fetching un-processed repository commits
     │   │   ├── github-loader.ts   ← LangChain document loader and RAG indexing orchestration
-    │   │   └── gemini.ts          ← Google GenAI integration (Commit summarization & Text Embeddings)
+    │   │   └── gemini.ts          ← Google GenAI integration (Commit summarization, Embeddings, RAG Q&A pipeline)
     │   │
     │   ├── server/
     │   │   └── db.ts              ← Prisma client singleton
@@ -157,8 +160,10 @@ Next.js **App Router** directory. Every folder with a `page.tsx` inside it becom
 | `app/auth/login/` | `/auth/login` | ✅ Fully functional (Email + OAuth) |
 | `app/auth/signup/` | `/auth/signup` | ✅ Fully functional (Email + password) |
 | `app/(protected)/` | `/QA`, `/create-project` | ✅ Protected layout group with Sidebar |
+| `app/(protected)/dashboard/` | `/dashboard` | ✅ Dashboard with Commit Log + Ask Question card |
 | `app/api/auth/[...all]/` | `/api/auth/*` | ✅ Better Auth API handler active |
 | `app/api/project/` | `/api/project` | ✅ API for project creation, commit polling, and background RAG indexing |
+| `app/api/QA/` | `/api/QA` | ✅ RAG Q&A API — validates request, calls `gemini.ts`, returns streaming text body + `X-File-References` header |
 
 ---
 
@@ -183,6 +188,9 @@ Utility functions and singleton instances shared across the application.
 - `gemini.ts` — Google GenAI integration. Contains:
   - `aiSummariseCommits()` — single-key batch commit summarization via `gemini-3.6-flash`.
   - `generateEmbedding()` — multi-key round-robin embedding via `gemini-embedding-2` with transparent 429 key rotation and 503 exponential backoff. Key pool is built from `GEMINI_API_KEY_1` … `GEMINI_API_KEY_10` at module load.
+  - `retrieveRelevantCode()` *(private)* — formats the query text as `task: code retrieval | query: <question>`, embeds it using the existing key pool, and runs a pgvector cosine-similarity search against `SourceCodeEmbedding.embedding` with a `0.5` threshold, `projectId` isolation, ordered DESC, limited to 10 results.
+  - `buildCodeContext()` *(private)* — assembles retrieved chunks into a `source: / code content:` context string for the Gemini prompt.
+  - `askQuestionWithContext()` *(exported)* — full RAG orchestrator. Returns `{ stream: ReadableStream<Uint8Array>, filesReferences: FileReference[] }`. The stream is a native `ReadableStream` wrapping the `@google/genai` async iterable from `generateContentStream()`. File references contain only `fileName`, `filePath`, `chunkIndex`, `similarity` — no source code.
 
 ---
 
@@ -241,11 +249,31 @@ Browser / Client
        │       └── Async → LangChain + Gemini Embedding Pool (indexGithubRepo)
        │                        │
        │                        ▼
-       │                   gemini.ts — Key Pool (GEMINI_API_KEY_1…10)
+       │                   gemini.ts — Key Pool (GEMINI_API_KEY_1—10)
        │                        │  429 quota → rotate key
        │                        │  503 → exponential backoff
        │                        ▼
        │                   Gemini Embedding API (gemini-embedding-2, 768-d)
+       │
+       ├── Ask Question (dashboard/ask-question-card.tsx)
+       │       │
+       │       ▼ POST { question, projectId }
+       │   Q&A API (src/app/api/QA/route.ts)
+       │       │ validate → askQuestionWithContext()
+       │       │
+       │       ▼ (gemini.ts)
+       │   Query Embedding → pgvector similarity search
+       │       │ threshold > 0.5 | order DESC | limit 10 | projectId isolation
+       │       ▼
+       │   Top-10 source-code chunks
+       │       │ ├──→ FileReference[] (fileName, filePath, chunkIndex, similarity)
+       │       └──→ Context string → Gemini 3.6 Flash (generateContentStream)
+       │                               ▼
+       │                    Response body: ReadableStream (text/plain)
+       │                    Response header: X-File-References (JSON)
+       │                               ▼
+       │   ask-question-card.tsx reads header → setFilesReferences()
+       │   ask-question-card.tsx reads stream → setAnswer()
        │
        ▼ (Prisma)
    Prisma Client (src/server/db.ts)
@@ -357,5 +385,7 @@ The following environment variables are used at runtime. Variables marked ✅ ar
 2. **AI Commit Summarization** — ✅ End-to-end flow using Octokit + `gemini-3.6-flash` to automatically index and summarize new project commits.
 3. **Repository Vector Search (RAG)** — ✅ `indexGithubRepo` using LangChain to chunk and embed source code into `SourceCodeEmbedding` via pgvector.
 4. **Gemini Embedding Key Rotation** — ✅ 5-key (up to 10) round-robin pool in `gemini.ts` eliminating 429 TPM quota errors on large repos.
-5. **Q&A Chat Interface** — **Next up:** Build the chat UI where users can ask questions about the indexed codebase, utilizing pgvector similarity search against the stored embeddings.
-6. **Dashboard Overview UI** — Expand dashboard data sections (Commit log is complete; more sections to follow).
+5. **Q&A Backend (RAG retrieval + streaming)** — ✅ `POST /api/QA` validates request, calls `askQuestionWithContext()` in `gemini.ts`, which embeds the query, retrieves top-10 source-code chunks from pgvector, builds a grounded context, and streams the `gemini-3.6-flash` answer as a native `ReadableStream`. File references are returned in the `X-File-References` response header.
+6. **Ask Question UI (Frontend card)** — ✅ `ask-question-card.tsx` sends question + projectId to `/api/QA`, reads `X-File-References` header, consumes the streaming body via `getReader()` / `TextDecoder`, and stores the answer in state. Toasts show loading / success / error feedback.
+7. **Q&A Answer Display** — **Next up:** Render the streamed `answer` in the Dialog (Markdown rendering, code blocks). Display retrieved `filesReferences` as a file-reference panel.
+8. **Dashboard Overview UI** — Expand dashboard data sections (Commit log and Ask Question card are complete; more sections to follow).
