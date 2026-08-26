@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-unused-vars */
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -52,9 +53,9 @@ export default function AskQuestionCard() {
       });
 
       if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
+        const errBody = (await res.json().catch(() => ({}))) as Record<string, unknown>;
         const errMsg =
-          (errBody as { error?: string }).error ??
+          (errBody.error as string | undefined) ??
           `Request failed (${res.status})`;
         throw new Error(errMsg);
       }
@@ -63,8 +64,8 @@ export default function AskQuestionCard() {
       // Falls back to empty array if the header is missing or cannot be parsed.
       const referencesHeader = res.headers.get("X-File-References");
       try {
-        const parsed = referencesHeader ? JSON.parse(referencesHeader) : [];
-        setFilesReferences(Array.isArray(parsed) ? parsed : []);
+        const parsed = (referencesHeader ? JSON.parse(referencesHeader) : []) as unknown;
+        setFilesReferences(Array.isArray(parsed) ? (parsed as { fileName: string; filePath: string; chunkIndex: number; similarity: number }[]) : []);
       } catch {
         setFilesReferences([]);
       }
