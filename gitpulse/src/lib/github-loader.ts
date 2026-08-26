@@ -5,6 +5,7 @@ import { type Document } from "@langchain/core/documents";
 import { generateEmbedding } from "./gemini";
 import { db } from "@/server/db";
 
+
 // ---------------------------------------------------------------------------
 // RAG / Indexing constants
 // ---------------------------------------------------------------------------
