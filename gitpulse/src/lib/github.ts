@@ -124,10 +124,14 @@ export const pollCommits = async (projectId: string, githubToken?: string) => {
         commitHashes
     );
 
+    console.log(`[GitHub Commits] Found ${commitHashes.length} commits in repo, ${unprocessedCommits.length} are new.`);
+
     if (unprocessedCommits.length === 0) {
-        console.log("No new commits to process.");
+        console.log("[GitHub Commits] No new commits to process.");
         return [];
     }
+
+    console.log(`[GitHub Commits] Fetching diffs for ${unprocessedCommits.length} commits...`);
 
     // Fetch each commit's diff from GitHub (multiple GitHub requests — this is fine).
     const diffResults = await Promise.allSettled(
@@ -143,14 +147,16 @@ export const pollCommits = async (projectId: string, githubToken?: string) => {
         if (result.status === "fulfilled") {
             commitDiffs.push(result.value);
         } else {
-            console.error("Failed to fetch a commit diff:", result.reason);
+            console.error("[GitHub Commits] Failed to fetch a commit diff:", result.reason);
         }
     }
 
     if (commitDiffs.length === 0) {
-        console.error("No diffs could be fetched; skipping Gemini call.");
+        console.error("[GitHub Commits] No diffs could be fetched; skipping Gemini call.");
         return [];
     }
+
+    console.log(`[GitHub Commits] Successfully fetched ${commitDiffs.length} diffs. Summarizing with Gemini...`);
 
     // ONE Gemini API call for the entire batch.
     const summaries = await aiSummariseCommits(commitDiffs);
@@ -164,7 +170,7 @@ export const pollCommits = async (projectId: string, githubToken?: string) => {
     const records = unprocessedCommits.flatMap((commit) => {
         const summary = summaryByHash.get(commit.commitHash);
         if (!summary) {
-            console.warn(`No summary returned for commit ${commit.commitHash}; skipping.`);
+            console.warn(`[GitHub Commits] No summary returned for commit ${commit.commitHash}; skipping.`);
             return [];
         }
         return [
@@ -180,7 +186,9 @@ export const pollCommits = async (projectId: string, githubToken?: string) => {
         ];
     });
 
+    console.log(`[Database] Saving ${records.length} summarized commits to the database...`);
     const commits = await db.commit.createMany({ data: records });
+    console.log(`[Database] Inserted ${commits.count} commit records.`);
 
     return commits;
 };

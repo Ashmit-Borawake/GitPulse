@@ -24,7 +24,10 @@ export async function POST(req: Request) {
   // 2. Validate question
   const { question, projectId } = body as Record<string, unknown>;
 
+  console.log(`[API QA] Received question request for project ${projectId}`);
+
   if (!question || typeof question !== 'string' || question.trim() === '') {
+    console.warn(`[API QA] Validation failed: Empty question`);
     return NextResponse.json(
       { error: '`question` is required and must be a non-empty string.' },
       { status: 400 },
@@ -32,6 +35,7 @@ export async function POST(req: Request) {
   }
 
   if (question.trim().length > 2000) {
+    console.warn(`[API QA] Validation failed: Question too long (${question.trim().length} chars)`);
     return NextResponse.json(
       { error: '`question` must be 2000 characters or fewer.' },
       { status: 400 },
@@ -40,6 +44,7 @@ export async function POST(req: Request) {
 
   // 3. Validate projectId
   if (!projectId || typeof projectId !== 'string' || projectId.trim() === '') {
+    console.warn(`[API QA] Validation failed: Invalid or missing projectId`);
     return NextResponse.json(
       { error: '`projectId` is required and must be a non-empty string.' },
       { status: 400 },
@@ -48,11 +53,13 @@ export async function POST(req: Request) {
 
   // 4. Delegate to gemini.ts and return the stream
   try {
+    console.log(`[API QA] Delegating question to Gemini pipeline...`);
     const { stream, filesReferences } = await askQuestionWithContext(
       question.trim(),
       projectId.trim(),
     );
 
+    console.log(`[API QA] Stream created successfully. Returning HTTP response.`);
     return new Response(stream, {
       headers: {
         'Content-Type': 'text/plain; charset=utf-8',

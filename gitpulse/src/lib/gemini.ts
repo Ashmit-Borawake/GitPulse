@@ -159,6 +159,7 @@ export const aiSummariseCommits = async (
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
+      console.log(`[Gemini] Generating commit summary using API Key 1 (Attempt ${attempt})...`);
       const response = await ai.models.generateContent({
         model: SUMMARISE_MODEL,
         contents: [
@@ -279,10 +280,10 @@ export const aiSummariseCommits = async (
  * The public API is unchanged: callers pass texts, receive vectors.
  *
  * @param texts - Array of plain-text strings to embed (one vector each).
- * @returns Array of 768-dimensional number arrays, same order as `texts`.
+ * @returns Object containing the array of 768-dimensional number arrays and the 1-based index of the API key used.
  */
-export async function generateEmbedding(texts: string[]): Promise<number[][]> {
-  if (texts.length === 0) return [];
+export async function generateEmbedding(texts: string[]): Promise<{ vectors: number[][], keyIndex: number }> {
+  if (texts.length === 0) return { vectors: [], keyIndex: 1 };
 
   const poolSize = embeddingPool.length;
 
@@ -355,7 +356,7 @@ export async function generateEmbedding(texts: string[]): Promise<number[][]> {
       // ── Advance global round-robin cursor past the key that succeeded ────
       embeddingKeyIndex = (currentKeyIdx + 1) % poolSize;
 
-      return vectors;
+      return { vectors, keyIndex: currentKeyIdx + 1 };
 
     } catch (err) {
       // ── 429 or 503: rotate to next key ─────────────────────────
@@ -445,7 +446,8 @@ async function retrieveRelevantCode(
   const queryText = `task: code retrieval | query: ${question}`;
 
   // 2. Embed the query using the existing pool infrastructure (single-item array).
-  const [queryVector] = await generateEmbedding([queryText]);
+  const { vectors } = await generateEmbedding([queryText]);
+  const queryVector = vectors[0];
   if (!queryVector) {
     throw new Error('[retrieveRelevantCode] Failed to generate query embedding.');
   }
@@ -545,7 +547,9 @@ export async function askQuestionWithContext(
   projectId: string,
 ): Promise<AskQuestionResult> {
   // --- Step 1: Retrieve relevant code chunks (single retrieval pass) ---
+  console.log(`[Gemini Q&A] Retrieving relevant code for question: "${question.substring(0, 50)}..."`);
   const chunks = await retrieveRelevantCode(question, projectId);
+  console.log(`[Gemini Q&A] Found ${chunks.length} relevant code chunks from pgvector.`);
 
   // --- Step 2: Derive lightweight file references (no sourceCode, no second query) ---
   const filesReferences: FileReference[] = chunks.map((c) => ({
@@ -560,43 +564,44 @@ export async function askQuestionWithContext(
 
   // --- Step 4: Build the final prompt ---
   const prompt = `You are an AI code assistant who answers questions about the codebase.
-Your target audience is a technical intern who is new to the codebase.
+    Your target audience is a technical intern who is new to the codebase.
 
-AI assistant is a brand new, powerful, human-like artificial intelligence.
+    AI assistant is a brand new, powerful, human-like artificial intelligence.
 
-The traits of AI include expert knowledge, helpfulness, cleverness, and articulateness.
+    The traits of AI include expert knowledge, helpfulness, cleverness, and articulateness.
 
-AI is a well-behaved and well-mannered individual.
+    AI is a well-behaved and well-mannered individual.
 
-AI is always friendly, kind, and inspiring, and he is eager to provide vivid and thoughtful responses to the user.
+    AI is always friendly, kind, and inspiring, and he is eager to provide vivid and thoughtful responses to the user.
 
-AI has the sum of all knowledge in their brain, and is able to accurately answer nearly any question about any topic in conversation.
+    AI has the sum of all knowledge in their brain, and is able to accurately answer nearly any question about any topic in conversation.
 
-If the question is asking about code or a specific file, AI will provide the detailed answer, giving step by step instructions if needed.
+    If the question is asking about code or a specific file, AI will provide the detailed answer, giving step by step instructions if needed.
 
-START CONTEXT BLOCK
+    START CONTEXT BLOCK
 
-${context || 'No relevant code context was found for this question.'}
+    ${context || 'No relevant code context was found for this question.'}
 
-END OF CONTEXT BLOCK
+    END OF CONTEXT BLOCK
 
-START QUESTION
+    START QUESTION
 
-${question}
+    ${question}
 
-END OF QUESTION
+    END OF QUESTION
 
-AI assistant will take into account any CONTEXT BLOCK that is provided in a conversation.
+    AI assistant will take into account any CONTEXT BLOCK that is provided in a conversation.
 
-If the context does not provide the answer to question, the AI assistant will say, "I'm sorry, but I don't know the answer to that question based on the available repository context."
+    If the context does not provide the answer to question, the AI assistant will say, "I'm sorry, but I don't know the answer to that question based on the available repository context."
 
-AI assistant will not apologize for previous responses, but instead will indicate new information was gained.
+    AI assistant will not apologize for previous responses, but instead will indicate new information was gained.
 
-AI assistant will not invent anything that is not drawn directly from the context.
+    AI assistant will not invent anything that is not drawn directly from the context.
 
-Answer in markdown syntax, with code snippets if needed. Be as detailed as possible when answering, making sure the answer is based on the provided context.`;
+    Answer in markdown syntax, with code snippets if needed. Be as detailed as possible when answering, making sure the answer is based on the provided context.`;
 
   // --- Step 5: Start streaming generation ---
+  console.log(`[Gemini] Starting Q&A stream using API Key 1...`);
   const geminiStream = await ai.models.generateContentStream({
     model: SUMMARISE_MODEL, // gemini-3.6-flash
     contents: [{ parts: [{ text: prompt }] }],

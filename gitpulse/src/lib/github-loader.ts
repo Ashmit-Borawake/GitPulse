@@ -828,12 +828,12 @@ export async function generateEmbeddings(
     // batch level — throw to fail the repository indexing operation.
     // -----------------------------------------------------------------------
     try {
-      const vectors = await generateEmbedding(texts);
+      const { vectors, keyIndex } = await generateEmbedding(texts);
       for (let j = 0; j < subBatch.length; j++) {
         embeddingVectors[subBatch[j]!.globalIndex] = vectors[j]!;
       }
       console.log(
-        `[Embedding] Sub-batch ${bi + 1}/${totalEmbedBatches} complete (${subBatch.length} chunks)`
+        `[Embedding] Sub-batch ${bi + 1}/${totalEmbedBatches} complete (${subBatch.length} chunks) using API Key ${keyIndex}`
       );
     } catch (err) {
       // generateEmbedding() exhausted all internal retries/keys.
