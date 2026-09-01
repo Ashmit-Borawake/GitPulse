@@ -13,7 +13,9 @@ When joining a new project or reviewing a large codebase, developers often strug
 * **AI-Powered Code Understanding:** Provides human-readable summaries of complex code files to make them easier to grasp.
 * **RAG-based Q&A:** Allows developers to chat directly with their codebase. You can ask specific questions like "How does the authentication work?" and get accurate, streamed answers grounded directly on the project's actual source code — not Gemini's general knowledge.
 * **File Reference Tracking:** When answering a question, GitPulse returns metadata about the exact retrieved code files (file name, path, chunk index, similarity score) that were used to construct the answer, available for future display in the UI.
-* **Quota-Resilient Embedding Pipeline:** Uses a pool of up to 10 Gemini API keys with automatic round-robin rotation, transparently recovering from 429 quota errors without interrupting the indexing process.
+* **Quota-Resilient Embedding Pipeline:** Uses a pool of **6 Gemini API keys** (`GEMINI_API_KEY_1` – `GEMINI_API_KEY_6`) with automatic round-robin rotation and refined 429 detection (`isRateLimitError()`), transparently recovering from quota errors without interrupting the indexing process.
+* **Hybrid File-Filtering System:** A two-pass filter eliminates non-code assets before any chunking or embedding occurs. The first pass uses `GithubRepoLoader`'s `ignoreFiles`/`ignorePaths` lists. The second pass applies the `shouldIndexFile()` function which classifies files using an extension allowlist, a binary extension blocklist, JSON special-casing, asset-path segment detection, and a binary-content heuristic for unknown extensions.
+* **Detailed Pipeline Logging:** Every stage of the indexing and Q&A pipeline emits structured console logs (`[GitHub Loader]`, `[Filter]`, `[Chunking]`, `[Embedding]`, `[Database]`, `[API QA]`, `[Gemini Q&A]`) for production-level observability.
 
 ## 4. Technology Stack
 * **Frontend: Next.js, React, Tailwind CSS:** Used to build a fast, responsive, and beautiful user interface where developers can view their dashboards and chat with the AI.
@@ -26,8 +28,10 @@ When joining a new project or reviewing a large codebase, developers often strug
 * **LangChain:** Used to efficiently load files directly from GitHub and split large code files into smaller, manageable chunks.
 * **RAG (Retrieval-Augmented Generation):** The system design that allows the AI to search the database for relevant code chunks before answering a question, ensuring answers are highly accurate and specific to the repository.
 * **Embeddings: Gemini Embedding 2 (`gemini-embedding-2`):** Converts chunks of code into 768-dimensional numerical vectors that capture semantic meaning, enabling accurate similarity searches at query time.
-* **Multi-Key Embedding Pool:** Up to 10 Gemini API keys (one per GCP project) are pooled with round-robin rotation in `gemini.ts`. On a 429 quota error, the pool transparently rotates to the next key. If all keys are exhausted, it sleeps 61 seconds for the TPM window to reset, then retries — all without any code changes in the calling layer.
+* **Multi-Key Embedding Pool:** **6 Gemini API keys** (`GEMINI_API_KEY_1` – `GEMINI_API_KEY_6`, one per GCP project) are pooled with round-robin rotation in `gemini.ts`. A refined `isRateLimitError()` helper distinguishes genuine quota 429s from auth failures and policy violations before triggering rotation. On a 429 quota error, the pool transparently rotates to the next key. If all 6 keys are exhausted, it sleeps 61 seconds for the TPM window to reset, then retries — all without any code changes in the calling layer.
+* **Single Key for Q&A & Commit Summarization:** `GEMINI_API_KEY_1` is reused as the single-client key for commit summarization (`aiSummariseCommits`) and Q&A streaming (`askQuestionWithContext`). These operations have different quota characteristics and do not benefit from pool rotation.
 * **Vector Database: pgvector:** An extension for PostgreSQL that stores the numerical embeddings and allows for efficient similarity searches when retrieving code for the AI.
+* **Hybrid File-Filtering System:** Two-pass filter in `github-loader.ts`. First pass: `GithubRepoLoader` `ignoreFiles` + `ignorePaths`. Second pass: `shouldIndexFile()` with 6 rules — extension allowlist (`KNOWN_SOURCE_EXTENSIONS`), binary blocklist (`KNOWN_BINARY_EXTENSIONS`), JSON special-casing (`INDEXABLE_JSON_FILENAMES`), asset-path segment exclusion (`ASSET_PATH_SEGMENTS`), and `looksLikeText()` binary heuristic for unknown extensions.
 
 ## 5. How the System Works
 GitPulse operates using two main flows:
@@ -51,6 +55,8 @@ GitPulse operates using two main flows:
 * **Accessible Knowledge:** Acts as an always-available expert that can instantly answer questions about the repository.
 
 ## 7. Future Scope
+* **Q&A Answer Display:** Render the streamed answer in the Dialog with Markdown and code block formatting; show a file-reference panel listing retrieved files.
+* **Credits System:** `User.credits` field (default 150) is already in the schema; deduction logic per Q&A call and UI credits display are planned.
 * **GitHub Issues and Pull Request Analysis:** Summarizing active issues and explaining the impact of open pull requests.
 * **Advanced Code-Quality Metrics:** Automatically detecting overly complex files or suggesting refactoring improvements.
 * **Multi-Repository Context:** Allowing the AI to answer questions that span across multiple connected microservices or repositories.
@@ -77,10 +83,16 @@ Large code files cannot be processed efficiently by the AI all at once. By divid
 It drastically reduces the time developers spend trying to understand unfamiliar repositories, complex code, and recent commits by providing AI-powered summaries and instant, codebase-specific Q&A.
 
 **7. Why do you use multiple Gemini API keys for embeddings?**
-The Gemini free tier limits each API key (per GCP project) to 30,000 tokens per minute (TPM). A typical repository produces ~1,000+ code chunks, which can push ~33K+ tokens through the embedding API in under a minute — exceeding the limit. By maintaining a pool of up to 10 keys (each from a different GCP project with its own independent 30K TPM quota), the system distributes token usage across keys using round-robin rotation. If a key still hits its quota, it automatically rotates to the next one. If all keys are exhausted simultaneously, it sleeps 61 seconds for the quota window to reset, then retries — completely transparently to the rest of the application.
+The Gemini free tier limits each API key (per GCP project) to 30,000 tokens per minute (TPM). A typical repository produces ~1,000+ code chunks, which can push ~33K+ tokens through the embedding API in under a minute — exceeding the limit. By maintaining a pool of **6 keys** (`GEMINI_API_KEY_1` – `GEMINI_API_KEY_6`, each from a different GCP project with its own independent 30K TPM quota), the system distributes token usage across keys using round-robin rotation. If a key still hits its quota, it automatically rotates to the next one. If all 6 keys are exhausted simultaneously, it sleeps 61 seconds for the quota window to reset, then retries — completely transparently to the rest of the application.
 
 **8. How does GitPulse stream the Q&A answer?**
 `gemini.ts` calls `ai.models.generateContentStream()` which returns a `@google/genai` async iterable. This is converted into a native web `ReadableStream<Uint8Array>` — with text chunks enqueued as they arrive and `controller.close()` called only on successful completion. The `/api/QA` route returns this as a standard HTTP `Response` with `Content-Type: text/plain`. The browser reads it via `res.body.getReader()` and `TextDecoder`, appending each streamed chunk directly to the answer state — producing a live typing effect without any third-party streaming libraries.
 
 **9. Why do you use a response header for file references instead of the response body?**
 The HTTP response body is already occupied by the raw streaming text of the Gemini answer. Switching the body to JSON would break the streaming behavior entirely. Instead, the lightweight file reference metadata (`fileName`, `filePath`, `chunkIndex`, `similarity`) is sent in the `X-File-References` response header as a JSON-encoded string. The frontend reads this header synchronously before starting to consume the body stream, so both pieces of information are available independently without interfering with each other.
+
+**10. How does the file-filtering system prevent bad files from entering the RAG corpus?**
+GitPulse uses a **two-pass** strategy. The first pass happens at load time inside `GithubRepoLoader` via `ignoreFiles` (file/glob patterns) and `ignorePaths` (directory trees) — this eliminates lock files, build outputs, dependencies, secrets, and binary assets before files are even downloaded. The second pass runs inside `shouldIndexFile()` after loading, classifying each file using six rules in order: (1) asset-path segment check, (2) known binary extension blocklist, (3) known source extension allowlist, (4-5) JSON special-case, (6) `looksLikeText()` heuristic for unknown extensions. Files that slip through both passes and produce more than 150 chunks trigger a pathological-file safeguard and are skipped entirely rather than truncated.
+
+**11. Why skip the entire file rather than truncating it when it exceeds the chunk limit?**
+Silently dropping the tail of a large source file would give the AI an incomplete and misleading picture of the implementation — the retrieved chunks would appear coherent but actually represent only a fraction of the file's logic. Skipping the file entirely surfaces the problem in the logs (`[Chunking] SKIPPED`) so the developer can investigate and add the appropriate exclusion rule, rather than silently degrading retrieval quality.

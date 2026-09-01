@@ -24,7 +24,7 @@ export async function POST(req: Request) {
   // 2. Validate question
   const { question, projectId } = body as Record<string, unknown>;
 
-  console.log(`[API QA] Received question request for project ${projectId}`);
+  console.log(`[API QA] Received question request for project ${String(projectId)}`);
 
   if (!question || typeof question !== 'string' || question.trim() === '') {
     console.warn(`[API QA] Validation failed: Empty question`);
