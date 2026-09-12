@@ -195,7 +195,11 @@ Utility functions and singleton instances shared across the application.
 - `utils.ts` — UI styling utilities.
 - `auth.ts` — **Server-side** Better Auth configuration and instance.
 - `auth-client.ts` — **Client-side** Better Auth configuration and instance.
-- `github.ts` — Octokit integration for fetching un-processed repository commits.
+- `github.ts` — Octokit integration for fetching and processing repository commits. Key internals:
+  - `getCommitHashes()` — fetches the top-10 most recent commits via Octokit.
+  - `filterUnprocessedCommits()` — filters out commits already in the DB.
+  - `fetchCommitDiff()` — fetches raw `.diff` for a single commit from GitHub.
+  - `pollCommits()` — top-level orchestrator guarded by an `inFlightPolls` Map to prevent duplicate concurrent runs per project. Fetches diffs via `Promise.allSettled`, calls `aiSummariseCommits` once for the entire batch, then saves all records using `db.commit.createMany({ skipDuplicates: true })`.
 - `github-loader.ts` — LangChain document loading, **hybrid file-filtering system**, chunking, and RAG indexing orchestration. Delegates all Gemini API calls (embedding + 429/503 handling) to `gemini.ts`. Key internals:
   - `KNOWN_SOURCE_EXTENSIONS` — allowlist of ~40 source/config/doc extensions always indexed.
   - `KNOWN_BINARY_EXTENSIONS` — blocklist of binary extensions (images, fonts, audio, video, archives) always excluded.
@@ -207,11 +211,12 @@ Utility functions and singleton instances shared across the application.
   - `generateEmbeddings()` — post-load filter → chunking (1500 chars, 150 overlap, MAX_EMBED_BATCH_SIZE=50) → pathological-file safeguard (>150 chunks/file → skip) → embedding batches → `EmbeddingRecord[]`.
   - `indexGithubRepo()` — top-level orchestrator: load → embed → insert into `SourceCodeEmbedding` via Prisma + `$executeRaw` for the vector column.
 - `gemini.ts` — Google GenAI integration. Contains:
-  - `aiSummariseCommits()` — single-key batch commit summarization via `gemini-3.6-flash` using `GEMINI_API_KEY_1`.
+  - `aiSummariseCommits()` — batch commit summarization via `gemini-3.6-flash` protected by the Generative Key Pool round-robin and failover logic.
   - `generateEmbedding()` — **6-key** round-robin embedding via `gemini-embedding-2` (`GEMINI_API_KEY_1` – `GEMINI_API_KEY_6`) with transparent 429 key rotation and 503 exponential backoff. Refined `isRateLimitError()` helper correctly distinguishes genuine quota 429s from auth failures and policy violations.
-  - `retrieveRelevantCode()` *(private)* — formats the query text as `task: code retrieval | query: <question>`, embeds it using the existing key pool, and runs a pgvector cosine-similarity search against `SourceCodeEmbedding.embedding` with a `0.5` threshold, `projectId` isolation, ordered DESC, limited to 10 results.
+  - `retrieveRelevantCode()` *(private)* — formats the query text as `task: code retrieval | query: <question>`, embeds it, and runs a pgvector cosine-similarity search against `SourceCodeEmbedding.embedding` with a `0.5` threshold, `projectId` isolation, ordered DESC, limited to 10 results.
   - `buildCodeContext()` *(private)* — assembles retrieved chunks into a `source: / code content:` context string for the Gemini prompt.
-  - `askQuestionWithContext()` *(exported)* — full RAG orchestrator. Uses `GEMINI_API_KEY_1` (same client as commit summarization) to stream the Gemini answer. Returns `{ stream: ReadableStream<Uint8Array>, filesReferences: FileReference[] }`. The stream is a native `ReadableStream` wrapping the `@google/genai` async iterable from `generateContentStream()`. File references contain only `fileName`, `filePath`, `chunkIndex`, `similarity` — no source code.
+  - `askQuestionWithContext()` *(exported)* — full RAG orchestrator. Uses the Generative Key Pool to stream the Gemini answer. Returns `{ stream: ReadableStream<Uint8Array>, filesReferences: FileReference[] }`. The stream is a native `ReadableStream` wrapping the `@google/genai` async iterable. File references contain only metadata — no source code, bypassing HTTP header limits.
+  - `executeWithGenerationFailover()` *(private)* — dedicated generative helper employing round-robin selection, 429 quota failover, 1-hour cooldowns, and 503 exponential backoff.
 
 ---
 
@@ -249,7 +254,7 @@ Contains `globals.css` — the single global stylesheet. This is where Tailwind 
 
 | File | Purpose |
 |------|---------|
-| `prisma/schema.prisma` | Defines the database schema. Contains auth models + `Project`, `UserToProject`, `Commit`, and `SourceCodeEmbedding` with `pgvector`. `User` model extended with `credits` (Int, default 150), `firstName` (String?), `lastName` (String?). |
+| `prisma/schema.prisma` | Defines the database schema. Contains auth models + `Project`, `UserToProject`, `Commit`, and `SourceCodeEmbedding` with `pgvector`. `User` model extended with `credits` (Int, default 150), `firstName` (String?), `lastName` (String?). `Commit` model has `@@unique([projectId, commitHash])` to prevent duplicate records. |
 
 ---
 
@@ -334,7 +339,7 @@ Used for client-side data fetching, caching, and state synchronization (e.g., fe
 Accessible UI components copied directly into `src/components/ui/`. Current components: `button`, `card`, `checkbox`, `dialog`, `input`, `label`, `separator`, `sheet`, `sidebar`, `skeleton`, `textarea`, `tooltip`.
 
 ### AI & Integrations
-- **Google GenAI (`@google/genai`)**: Used for commit summarization (`gemini-3.6-flash`) and 768-dimensional vector embeddings (`gemini-embedding-2`). Embedding calls use a **6-key pool** (`GEMINI_API_KEY_1` – `GEMINI_API_KEY_6`) with round-robin rotation and transparent 429/503 error handling inside `gemini.ts`. `GEMINI_API_KEY_1` is also reused as the single-client key for commit summarization and Q&A streaming. The `isRateLimitError()` helper ensures only genuine quota 429s trigger rotation.
+- **Google GenAI (`@google/genai`)**: Used for commit summarization (`gemini-3.6-flash`) and 768-dimensional vector embeddings (`gemini-embedding-2`). Embedding calls use a **6-key embedding pool** (`GEMINI_API_KEY_1` – `GEMINI_API_KEY_6`) with round-robin rotation and transparent 429/503 error handling. A **separate 6-key Generative Pool** is used by both `aiSummariseCommits` and `askQuestionWithContext` with round-robin load balancing, 429 failover, 1-hour smart cooldowns, and 503 exponential backoff — all handled by the shared `executeWithGenerationFailover()` helper. The `isRateLimitError()` helper ensures only genuine quota 429s trigger rotation.
 - **LangChain (`@langchain/community`)**: Used for robust repository loading (`GithubRepoLoader`) and intelligent chunking (`RecursiveCharacterTextSplitter`).
 - **Octokit (`octokit`)**: Used to interact directly with the GitHub API for fetching commits and diffs.
 
@@ -380,7 +385,7 @@ The database contains the core Better Auth models + standard GitPulse models:
 - `User` — Extended with `credits` (Int, default 150), `firstName` (String?), `lastName` (String?)
 - `Project` — Custom GitPulse table for workspace projects (stores optional `githubToken` for private repo access)
 - `UserToProject` — Many-to-many junction table linking Users to Projects
-- `Commit` — Stores individual Git commits with AI-generated summaries
+- `Commit` — Stores individual Git commits with AI-generated summaries. Has `@@unique([projectId, commitHash])` to prevent duplicate insertions.
 - `SourceCodeEmbedding` — Stores chunked repository code, `fileName`, `filePath`, `chunkIndex`, and `768`-dimensional pgvector embeddings. Has `onDelete: Cascade` from `Project`.
 
 ---
@@ -404,8 +409,8 @@ The following environment variables are used at runtime. Variables marked ✅ ar
 | `GOOGLE_CLIENT_ID/SECRET` | ✅ | OAuth credentials for Google Sign-In. |
 | `GITHUB_CLIENT_ID/SECRET` | ✅ | OAuth credentials for GitHub Sign-In. |
 | `GITHUB_TOKEN` | — | Optional GitHub PAT for loading private repos / raising API rate limits. |
-| `GEMINI_API_KEY_1` … `GEMINI_API_KEY_6` | — | **6-key** embedding pool. Each key is from a **different GCP project** for independent 30K TPM quotas. `GEMINI_API_KEY_1` is also the single key used for commit summarization and Q&A streaming (`aiSummariseCommits` + `askQuestionWithContext`). |
-| `GEMINI_API_KEY` | — | Legacy single-key fallback. Used for commit summarization only if no `GEMINI_API_KEY_1` is configured. |
+| `GEMINI_API_KEY_1` … `GEMINI_API_KEY_6` | — | Shared across both pools. **Embedding pool** uses all 6 keys with round-robin + 429/503 handling. **Generative pool** also uses all 6 keys for commit summarization and Q&A streaming with round-robin, 429 failover, smart cooldowns, and 503 retries via `executeWithGenerationFailover()`. Each key is from a separate GCP project with independent quotas. |
+| `GEMINI_API_KEY` | — | Legacy single-key fallback. Used by both pools if no numbered keys are configured. |
 
 ---
 
@@ -414,7 +419,7 @@ The following environment variables are used at runtime. Variables marked ✅ ar
 1. **Dashboard Data Integration** — ✅ Connect the `/create-project` form to a REST endpoint to insert into the `Project` database model.
 2. **AI Commit Summarization** — ✅ End-to-end flow using Octokit + `gemini-3.6-flash` to automatically index and summarize new project commits.
 3. **Repository Vector Search (RAG)** — ✅ `indexGithubRepo` using LangChain to chunk and embed source code into `SourceCodeEmbedding` via pgvector.
-4. **Gemini Embedding Key Rotation** — ✅ **6-key** (`GEMINI_API_KEY_1`–`GEMINI_API_KEY_6`) round-robin pool in `gemini.ts` eliminating 429 TPM quota errors on large repos. `GEMINI_API_KEY_1` also used as single client for commit summarization and Q&A streaming. Refined `isRateLimitError()` distinguishes genuine quota 429s from auth failures and policy violations.
+4. **Gemini Embedding Key Rotation** — ✅ **6-key** (`GEMINI_API_KEY_1`–`GEMINI_API_KEY_6`) round-robin embedding pool in `gemini.ts` eliminating 429 TPM quota errors on large repos. Refined `isRateLimitError()` distinguishes genuine quota 429s from auth failures and policy violations. A **separate 6-key Generative Pool** with `executeWithGenerationFailover()` protects commit summarization and Q&A streaming with round-robin load balancing, 429 failover, 1-hour smart cooldowns, and 503 exponential backoff.
 5. **File Filtering System** — ✅ Hybrid 6-rule `shouldIndexFile()` in `github-loader.ts`: extension allowlist (`KNOWN_SOURCE_EXTENSIONS`), binary blocklist (`KNOWN_BINARY_EXTENSIONS`), JSON special-casing (`INDEXABLE_JSON_FILENAMES`), asset-path segment exclusion, and binary-detection heuristic for unknown extensions.
 6. **Q&A Backend (RAG retrieval + streaming)** — ✅ `POST /api/QA` validates request, calls `askQuestionWithContext()` in `gemini.ts`, which embeds the query, retrieves top-10 source-code chunks from pgvector, builds a grounded context, and streams the `gemini-3.6-flash` answer as a native `ReadableStream`. File references are returned in the `X-File-References` response header.
 7. **Ask Question UI (Frontend card)** — ✅ `ask-question-card.tsx` sends question + projectId to `/api/QA`, reads `X-File-References` header, consumes the streaming body via `getReader()` / `TextDecoder`, and stores the answer in state. Dialog opens on submit. Toasts show loading / success / error feedback.

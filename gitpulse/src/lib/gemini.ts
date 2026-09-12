@@ -39,25 +39,118 @@ const EMBEDDING_DIMENSIONS = 768;
 /** Maximum Gemini retry attempts on 503 UNAVAILABLE. */
 const MAX_RETRIES = 3;
 
+/** Minimum cosine similarity required for a source-code chunk to be retrieved. */
+const RETRIEVAL_SIMILARITY_THRESHOLD = 0.5;
+
 // ---------------------------------------------------------------------------
-// Summarisation client (single key — not pooled)
+// Generative Key Pool (Round-Robin & Failover)
 // ---------------------------------------------------------------------------
 
+type KeyClient = { client: GoogleGenAI; index: number };
+
 /**
- * Single shared GoogleGenAI client used exclusively for commit summarisation.
- * This is NOT part of the embedding key pool; commit summarisation has
- * different quota characteristics and does not need key rotation.
+ * Collects GEMINI_API_KEY_1 … GEMINI_API_KEY_10 from the environment and
+ * returns one KeyClient per key. Used specifically for generation tasks
+ * (Q&A and commit summarisation) to separate their quotas from embeddings.
  */
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY ?? process.env.GEMINI_API_KEY_1,
-});
+function buildGenerationKeyPool(): KeyClient[] {
+  const pool: KeyClient[] = [];
+  for (let i = 1; i <= 10; i++) {
+    const key = process.env[`GEMINI_API_KEY_${i}`];
+    if (key) pool.push({ client: new GoogleGenAI({ apiKey: key }), index: i });
+  }
+  if (pool.length === 0) {
+    const legacyKey = process.env.GEMINI_API_KEY;
+    if (legacyKey) pool.push({ client: new GoogleGenAI({ apiKey: legacyKey }), index: 1 });
+  }
+  if (pool.length === 0) {
+    throw new Error(
+      '[Gemini Generation] No API keys configured. Set GEMINI_API_KEY_1 … GEMINI_API_KEY_N.'
+    );
+  }
+  console.log(`[Gemini Generation] Pool initialized with ${pool.length} key(s).`);
+  return pool;
+}
+
+const generationPool: KeyClient[] = buildGenerationKeyPool();
+let generationKeyIndex = 0;
+const generationCooldowns = new Map<number, number>();
+const COOLDOWN_MS = 60 * 60 * 1000; // 1 hour cooldown for 429 quota exhaustion
+
+/**
+ * Executes a Gemini operation with Round-Robin key distribution, 
+ * 503 retries, 429 smart cooldowns, and automatic failover.
+ */
+async function executeWithGenerationFailover<T>(
+  operationName: string,
+  operation: (client: GoogleGenAI) => Promise<T>
+): Promise<T> {
+  const poolSize = generationPool.length;
+  let attempts = 0;
+
+  while (attempts < poolSize) {
+    const current = generationPool[generationKeyIndex]!;
+    generationKeyIndex = (generationKeyIndex + 1) % poolSize;
+
+    // Check cooldown
+    const cooldownExpiry = generationCooldowns.get(current.index);
+    if (cooldownExpiry) {
+      if (Date.now() < cooldownExpiry) {
+        attempts++;
+        continue;
+      }
+      generationCooldowns.delete(current.index);
+    }
+
+    let retryAttempt = 1;
+    while (retryAttempt <= MAX_RETRIES) {
+      try {
+        if (retryAttempt === 1) {
+          console.log(`[Gemini Generation] ${operationName} using API Key ${current.index}...`);
+        }
+        const result = await operation(current.client);
+        console.log(`[Gemini Generation] API Key ${current.index} succeeded.`);
+        return result;
+      } catch (error) {
+        const isUnavailable = error instanceof ApiError && error.status === 503;
+        
+        if (isUnavailable && retryAttempt < MAX_RETRIES) {
+          const delayMs = 1000 * Math.pow(2, retryAttempt - 1); // 1s, 2s, 4s
+          console.warn(`[Gemini Generation] API Key ${current.index} returned 503. Retrying in ${delayMs}ms.`);
+          await sleep(delayMs);
+          retryAttempt++;
+          continue;
+        } else if (isUnavailable) {
+          console.warn(`[Gemini Generation] API Key ${current.index} failed with 503 after ${MAX_RETRIES} attempts. Failing over...`);
+          break; // Break retry loop to fail over to next key
+        }
+
+        if (isRateLimitError(error)) {
+          console.warn(`[Gemini Generation] API Key ${current.index} hit rate limit (429). Failing over...`);
+          generationCooldowns.set(current.index, Date.now() + COOLDOWN_MS);
+          break; // Break retry loop to fail over
+        }
+
+        // Non-retryable error (e.g. 400 Bad Request, auth failure)
+        throw error;
+      }
+    }
+    
+    attempts++;
+    if (attempts < poolSize) {
+      console.log(`[Gemini Generation] Trying next available key...`);
+    }
+  }
+
+  throw new Error('All available Gemini generation API keys are currently unavailable or quota-exhausted.');
+}
 
 // ---------------------------------------------------------------------------
 // Embedding key pool — multi-key round-robin for quota distribution
 // ---------------------------------------------------------------------------
 
 /**
- * Collects GEMINI_API_KEY_1 … GEMINI_API_KEY_10 from the environment and
+ * Collects GEMINI_API_KEY_1 … GEMINI_API_KEY_6 from the environment and
  * returns one GoogleGenAI client per key.
  *
  * Falls back to GEMINI_API_KEY for single-key / legacy mode if no numbered
@@ -157,13 +250,11 @@ export const aiSummariseCommits = async (
     .map((c) => `COMMIT: ${c.commitHash}\nDIFF:\n${c.diff}`)
     .join('\n\n---\n\n');
 
-  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    try {
-      console.log(`[Gemini] Generating commit summary using API Key 1 (Attempt ${attempt})...`);
-      const response = await ai.models.generateContent({
-        model: SUMMARISE_MODEL,
-        contents: [
-          `You are an expert programmer, and you are trying to summarize git diffs.
+  return executeWithGenerationFailover('Starting summarization', async (client) => {
+    const response = await client.models.generateContent({
+      model: SUMMARISE_MODEL,
+      contents: [
+        `You are an expert programmer, and you are trying to summarize git diffs.
       Reminders about the git diff format:
       For every file, there are a few metadata lines, like (for example):
       \`\`\`
@@ -178,86 +269,62 @@ export const aiSummariseCommits = async (
       A line that starting with \`-\` means that line was deleted.
       A line that starts with neither \`+\` nor \`-\` is code given for context and better understanding.
       It is not part of the diff.
-      [...]
+
       EXAMPLE SUMMARY COMMENTS:
       \`\`\`
-      * Raised the amount of returned recordings from \`10\` to \`100\` [packages/server/recordings_api.ts], [packages/server/constants.ts]
+      * Added a newline in backend documentation [Docs/BACKEND_DOCUMENTATION.md]
       * Fixed a typo in the github action name [.github/workflows/gpt-commit-summarizer.yml]
-      * Moved the \`octokit\` initialization to a separate file [src/octokit.ts], [src/index.ts]
-      * Added an OpenAI API for completions [packages/utils/apis/openai.ts]
-      * Lowered numeric tolerance for test files
+      * Added a UI Integration Note to [Docs/FEATURES_AND_WORKFLOW.md]
+      * Added a Recent UI Enhancements section to [Docs/FRONTEND_DOCUMENTATION.md]
+      * Added a live demo link to [README.md]
       \`\`\`
-      Most commits will have less comments than this examples list.
-      The last comment does not include the file names,
-      because there were more than two relevant files in the hypothetical commit.
-      Do not include parts of the example in your summary.
-      It is given only as an example of appropriate comments.
+      Do not include parts of the example in your summary unless they match the actual diff.
 
       You are receiving MULTIPLE commits. For each commit:
       - Analyse only that commit's diff.
-      - Produce exactly one concise summary for it.
+      - Produce exactly one summary for it.
       - Do NOT combine different commits into one summary.
       - Do NOT omit any commit.
-      - Mention relevant file names where appropriate, following the example style above.
       - Base each summary solely on that commit's diff.
       
-      FORMATTING RULES FOR SUMMARY:
+      FORMATTING AND SPECIFICITY RULES FOR SUMMARY:
       - The summary MUST be a multiline string containing concise bullet points.
       - Each distinct change MUST be on its own line and MUST start with \`* \`.
-      - NEVER combine multiple distinct changes into one comma-separated sentence.
-      - NEVER return the summary as a single paragraph when the commit contains multiple changes.
-      - Keep each bullet concise and focused on one change.
-      - If a commit has only one meaningful change, a single \`* \` bullet is sufficient.
-      - Do not create unnecessary bullets for trivial details that belong to the same logical change.
+      - BE SPECIFIC AND ACCURATE: State the exact specific change (e.g., "Added a newline in backend documentation", "Added a UI Integration Note") rather than generic abstractions (e.g. avoid vague summaries like "Fixed minor formatting" or "Updated docs").
+      - PREFER SEPARATE BULLETS PER FILE: Create a separate bullet point for each modified file with its individual file reference tag \`[filepath]\`, rather than grouping multiple files into one combined bullet.
+      - Keep each bullet concise, precise, and directly reflected in the diff.
       - The output must remain valid JSON. The bullet points should be contained inside the \`summary\` string using newline characters (\\n).
 
       Return a JSON array with one object per commit:
       [{ "commitHash": "<hash>", "summary": "<summary>" }]
       Include every commitHash exactly as provided. Do not add extra fields.`,
 
-          `Here are the commits to summarise:\n\n${commitBlocks}`,
-        ],
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                commitHash: { type: Type.STRING },
-                summary: { type: Type.STRING },
-              },
-              required: ['commitHash', 'summary'],
+        `Here are the commits to summarise:\n\n${commitBlocks}`,
+      ],
+      config: {
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              commitHash: { type: Type.STRING },
+              summary: { type: Type.STRING },
             },
+            required: ['commitHash', 'summary'],
           },
         },
-      });
+      },
+    });
 
-      const raw = response.text;
-      if (!raw) {
-        throw new Error('Gemini returned an empty response');
-      }
-
-      const parsed: CommitSummary[] = JSON.parse(raw) as CommitSummary[];
-      return parsed;
-
-    } catch (err) {
-      // Retry only on 503 UNAVAILABLE (temporary overload); rethrow everything else.
-      const isUnavailable = err instanceof ApiError && err.status === 503;
-
-      if (isUnavailable && attempt < MAX_RETRIES) {
-        const delayMs = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s
-        console.warn(`[Gemini] 503 on attempt ${attempt}/${MAX_RETRIES} — retrying in ${delayMs}ms…`);
-        await sleep(delayMs);
-        continue;
-      }
-
-      throw err;
+    const raw = response.text;
+    if (!raw) {
+      throw new Error('Gemini returned an empty response');
     }
-  }
 
-  // Should never reach here
-  throw new Error('Gemini: all retry attempts exhausted');
+    const parsed: CommitSummary[] = JSON.parse(raw) as CommitSummary[];
+    return parsed;
+  });
 };
 
 // ---------------------------------------------------------------------------
@@ -476,7 +543,7 @@ async function retrieveRelevantCode(
     FROM "SourceCodeEmbedding"
     WHERE
       "projectId" = ${projectId}
-      AND 1 - ("embedding" <=> ${vectorQuery}::vector) > 0.5
+      AND 1 - ("embedding" <=> ${vectorQuery}::vector) > ${RETRIEVAL_SIMILARITY_THRESHOLD}
     ORDER BY similarity DESC
     LIMIT 10
   `;
@@ -519,7 +586,7 @@ export type FileReference = {
 
 /**
  * Return type of `askQuestionWithContext`.
- * Carries both the streaming answer body and the lightweight file references
+ * Carries both the streaming answer body and the file references
  * derived from the actual pgvector retrieval results.
  */
 export type AskQuestionResult = {
@@ -531,7 +598,7 @@ export type AskQuestionResult = {
  * Full RAG Q&A pipeline:
  *   1. Embed the user query.
  *   2. Retrieve relevant code chunks via pgvector.
- *   3. Derive lightweight file references from the chunks (no second query).
+ *   3. Derive file references from the chunks (no second query).
  *   4. Build a context string.
  *   5. Stream a Gemini answer grounded in the retrieved context.
  *
@@ -559,7 +626,7 @@ export async function askQuestionWithContext(
     similarity: c.similarity,
   }));
 
-  // --- Step 3: Build context string from the same chunks ---
+  // --- Step 3: Build Human readable context string from the same chunks ---
   const context = buildCodeContext(chunks);
 
   // --- Step 4: Build the final prompt ---
@@ -601,10 +668,11 @@ export async function askQuestionWithContext(
     Answer in markdown syntax, with code snippets if needed. Be as detailed as possible when answering, making sure the answer is based on the provided context.`;
 
   // --- Step 5: Start streaming generation ---
-  console.log(`[Gemini] Starting Q&A stream using API Key 1...`);
-  const geminiStream = await ai.models.generateContentStream({
-    model: SUMMARISE_MODEL, // gemini-3.6-flash
-    contents: [{ parts: [{ text: prompt }] }],
+  const geminiStream = await executeWithGenerationFailover('Starting Q&A stream', async (client) => {
+    return await client.models.generateContentStream({
+      model: SUMMARISE_MODEL, // gemini-3.6-flash
+      contents: [{ parts: [{ text: prompt }] }],
+    });
   });
 
   // --- Step 6: Convert Gemini async iterable → native ReadableStream ---

@@ -19,6 +19,7 @@ export default function AskQuestionCard() {
   const [open, setOpen] = React.useState(false);
   const [question, setQuestion] = React.useState("");
   const [loading, setLoading] = React.useState(false);
+  const [answer, setAnswer] = React.useState("");
   const [filesReferences, setFilesReferences] = React.useState<
     {
       fileName: string;
@@ -27,7 +28,6 @@ export default function AskQuestionCard() {
       similarity: number;
     }[]
   >([]);
-  const [answer, setAnswer] = React.useState("");
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -53,7 +53,10 @@ export default function AskQuestionCard() {
       });
 
       if (!res.ok) {
-        const errBody = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        const errBody = (await res.json().catch(() => ({}))) as Record<
+          string,
+          unknown
+        >;
         const errMsg =
           (errBody.error as string | undefined) ??
           `Request failed (${res.status})`;
@@ -64,8 +67,19 @@ export default function AskQuestionCard() {
       // Falls back to empty array if the header is missing or cannot be parsed.
       const referencesHeader = res.headers.get("X-File-References");
       try {
-        const parsed = (referencesHeader ? JSON.parse(referencesHeader) : []) as unknown;
-        setFilesReferences(Array.isArray(parsed) ? (parsed as { fileName: string; filePath: string; chunkIndex: number; similarity: number }[]) : []);
+        const parsed = (
+          referencesHeader ? JSON.parse(referencesHeader) : []
+        ) as unknown;
+        setFilesReferences(
+          Array.isArray(parsed)
+            ? (parsed as {
+                fileName: string;
+                filePath: string;
+                chunkIndex: number;
+                similarity: number;
+              }[])
+            : [],
+        );
       } catch {
         setFilesReferences([]);
       }
@@ -108,6 +122,12 @@ export default function AskQuestionCard() {
               </div>
             </DialogTitle>
           </DialogHeader>
+
+          {answer}
+          <h1>Files References</h1>
+          {filesReferences.map((file) => {
+            return <span key={`${file.filePath}-${file.chunkIndex}`}>{file.fileName}</span>;
+          })}
         </DialogContent>
       </Dialog>
       <Card className="relative col-span-3">

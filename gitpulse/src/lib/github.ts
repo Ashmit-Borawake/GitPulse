@@ -110,85 +110,105 @@ const fetchCommitDiff = async (
     return res.text();
 };
 
+// Tracks active pollCommits executions per project to prevent duplicate concurrent runs.
+const inFlightPolls = new Map<string, Promise<unknown>>();
+
 // Orchestrates: fetch commits → filter unprocessed → fetch all diffs → ONE Gemini call → save to DB.
 export const pollCommits = async (projectId: string, githubToken?: string) => {
-    const { githubUrl, project } = await fetchProjectGithubUrl(projectId);
-
-    // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
-    const tokenToUse = githubToken || project.githubToken || undefined;
-
-    const commitHashes = await getCommitHashes(githubUrl, tokenToUse);
-
-    const unprocessedCommits = await filterUnprocessedCommits(
-        projectId,
-        commitHashes
-    );
-
-    console.log(`[GitHub Commits] Found ${commitHashes.length} commits in repo, ${unprocessedCommits.length} are new.`);
-
-    if (unprocessedCommits.length === 0) {
-        console.log("[GitHub Commits] No new commits to process.");
-        return [];
+    if (inFlightPolls.has(projectId)) {
+        console.log(`[GitHub Commits] pollCommits already in-flight for project ${projectId}, awaiting existing run.`);
+        return inFlightPolls.get(projectId);
     }
 
-    console.log(`[GitHub Commits] Fetching diffs for ${unprocessedCommits.length} commits...`);
+    const pollPromise = (async () => {
+        const { githubUrl, project } = await fetchProjectGithubUrl(projectId);
 
-    // Fetch each commit's diff from GitHub (multiple GitHub requests — this is fine).
-    const diffResults = await Promise.allSettled(
-        unprocessedCommits.map(async (commit) => {
-            const diff = await fetchCommitDiff(githubUrl, commit.commitHash, tokenToUse);
-            return { commitHash: commit.commitHash, diff };
-        })
-    );
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+        const tokenToUse = githubToken || project.githubToken || undefined;
 
-    // Keep only successfully fetched diffs; warn on failures.
-    const commitDiffs: { commitHash: string; diff: string }[] = [];
-    for (const result of diffResults) {
-        if (result.status === "fulfilled") {
-            commitDiffs.push(result.value);
-        } else {
-            console.error("[GitHub Commits] Failed to fetch a commit diff:", result.reason);
-        }
-    }
+        const commitHashes = await getCommitHashes(githubUrl, tokenToUse);
 
-    if (commitDiffs.length === 0) {
-        console.error("[GitHub Commits] No diffs could be fetched; skipping Gemini call.");
-        return [];
-    }
+        const unprocessedCommits = await filterUnprocessedCommits(
+            projectId,
+            commitHashes
+        );
 
-    console.log(`[GitHub Commits] Successfully fetched ${commitDiffs.length} diffs. Summarizing with Gemini...`);
+        console.log(`[GitHub Commits] Found ${commitHashes.length} commits in repo, ${unprocessedCommits.length} are new.`);
 
-    // ONE Gemini API call for the entire batch.
-    const summaries = await aiSummariseCommits(commitDiffs);
-
-    // Build a lookup map so we match by commitHash — not by array index.
-    const summaryByHash = new Map(
-        summaries.map((s) => [s.commitHash, s.summary])
-    );
-
-    // Build the DB records, only for commits that received a valid summary.
-    const records = unprocessedCommits.flatMap((commit) => {
-        const summary = summaryByHash.get(commit.commitHash);
-        if (!summary) {
-            console.warn(`[GitHub Commits] No summary returned for commit ${commit.commitHash}; skipping.`);
+        if (unprocessedCommits.length === 0) {
+            console.log("[GitHub Commits] No new commits to process.");
             return [];
         }
-        return [
-            {
-                projectId,
-                commitHash: commit.commitHash,
-                commitMessage: commit.commitMessage,
-                commitAuthorName: commit.commitAuthorName,
-                commitAuthorAvatar: commit.commitAuthorAvatar,
-                commitDate: commit.commitDate,
-                summary,
-            },
-        ];
-    });
 
-    console.log(`[Database] Saving ${records.length} summarized commits to the database...`);
-    const commits = await db.commit.createMany({ data: records });
-    console.log(`[Database] Inserted ${commits.count} commit records.`);
+        console.log(`[GitHub Commits] Fetching diffs for ${unprocessedCommits.length} commits...`);
 
-    return commits;
+        // Fetch each commit's diff from GitHub (multiple GitHub requests — this is fine).
+        const diffResults = await Promise.allSettled(
+            unprocessedCommits.map(async (commit) => {
+                const diff = await fetchCommitDiff(githubUrl, commit.commitHash, tokenToUse);
+                return { commitHash: commit.commitHash, diff };
+            })
+        );
+
+        // Keep only successfully fetched diffs; warn on failures.
+        const commitDiffs: { commitHash: string; diff: string }[] = [];
+        for (const result of diffResults) {
+            if (result.status === "fulfilled") {
+                commitDiffs.push(result.value);
+            } else {
+                console.error("[GitHub Commits] Failed to fetch a commit diff:", result.reason);
+            }
+        }
+
+        if (commitDiffs.length === 0) {
+            console.error("[GitHub Commits] No diffs could be fetched; skipping Gemini call.");
+            return [];
+        }
+
+        console.log(`[GitHub Commits] Successfully fetched ${commitDiffs.length} diffs. Summarizing with Gemini...`);
+
+        // ONE Gemini API call for the entire batch.
+        const summaries = await aiSummariseCommits(commitDiffs);
+
+        // Build a lookup map so we match by commitHash — not by array index.
+        const summaryByHash = new Map(
+            summaries.map((s) => [s.commitHash, s.summary])
+        );
+
+        // Build the DB records, only for commits that received a valid summary.
+        const records = unprocessedCommits.flatMap((commit) => {
+            const summary = summaryByHash.get(commit.commitHash);
+            if (!summary) {
+                console.warn(`[GitHub Commits] No summary returned for commit ${commit.commitHash}; skipping.`);
+                return [];
+            }
+            return [
+                {
+                    projectId,
+                    commitHash: commit.commitHash,
+                    commitMessage: commit.commitMessage,
+                    commitAuthorName: commit.commitAuthorName,
+                    commitAuthorAvatar: commit.commitAuthorAvatar,
+                    commitDate: commit.commitDate,
+                    summary,
+                },
+            ];
+        });
+
+        console.log(`[Database] Saving ${records.length} summarized commits to the database...`);
+        const commits = await db.commit.createMany({
+            data: records,
+            skipDuplicates: true,
+        });
+        console.log(`[Database] Inserted ${commits.count} commit records.`);
+
+        return commits;
+    })();
+
+    inFlightPolls.set(projectId, pollPromise);
+    try {
+        return await pollPromise;
+    } finally {
+        inFlightPolls.delete(projectId);
+    }
 };

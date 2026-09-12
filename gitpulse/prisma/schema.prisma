@@ -122,6 +122,8 @@ model Commit {
 
   // ai summary
   summary String
+
+  @@unique([projectId, commitHash])
 }
 
 model SourceCodeEmbedding {

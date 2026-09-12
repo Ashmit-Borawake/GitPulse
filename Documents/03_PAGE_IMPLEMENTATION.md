@@ -1,187 +1,588 @@
-# 03 — Page Implementation
+# 03 — GitPulse Page Implementation
 
-> **Document Status:** Living document — intentionally incomplete at this stage.
-> Last meaningful update: **Phase 1 planning.**
->
-> Sections marked **"To be completed after tutorial implementation."** will be filled in during Phase 2 (for tutorial-based pages) and Phase 5 (for the Workspace module). Do not invent implementation details before the codebase exists.
+> **Document Status:** Reflects currently implemented routes, pages, and frontend components.
+> This document is the frontend implementation reference. Visual design specification belongs in `02_UI_DESIGN_SYSTEM.md`. Backend implementation details belong in `04_BACKEND_AND_RAG.md`.
 
 ---
 
-## Overview
+## Table of Contents
 
-GitPulse's application is divided into two major surface areas:
-
-1. **Public / Marketing surface** — Landing Page and auth flows, accessible without signing in.
-2. **Authenticated application** — All product functionality, protected by Clerk, organized under a persistent sidebar-driven shell.
-
----
-
-## Application Areas
-
-### 1. Landing Page
-
-**Responsibility:** Marketing and acquisition. Communicates the product's value proposition, explains the three feature pillars, outlines the credit system, and funnels visitors to sign up.
-
-**Key sections (see `02_UI_DESIGN_SYSTEM.md` Section 14 for visual spec):**
-- Sticky top navigation: Features / How it Works / Pricing / Sign In + "Get Started" CTA
-- Full-bleed hero: headline, subheadline, primary + secondary CTAs, atmosphere background effects
-- Feature showcase grid: GitHub Repository Intelligence, Workspace (PR & Issue Intelligence), Credits & Billing
-- "How it Works" 3-step flow
-- Pricing / Credits teaser + sign-up CTA
-- Footer with grouped link columns
-
-**No meeting-related copy anywhere on this page.**
-
-**Navigation concepts:** Clicking "Sign In" or "Get Started" routes the user into Clerk's auth flow. After authentication, the user lands in the authenticated application.
-
-> Route paths and folder structure: **To be completed after tutorial implementation (Phase 2).**
+1. [Document Status](#1-document-status)
+2. [Application Route Overview](#2-application-route-overview)
+3. [Root Application Structure](#3-root-application-structure)
+4. [Authentication Pages](#4-authentication-pages)
+5. [Protected Application Shell](#5-protected-application-shell)
+6. [Dashboard](#6-dashboard)
+7. [Ask Question Feature](#7-ask-question-feature)
+8. [Create Project Page](#8-create-project-page)
+9. [Commit Log](#9-commit-log)
+10. [Sidebar and Shared Components](#10-sidebar-and-shared-components)
+11. [Frontend-to-API Integration](#11-frontend-to-api-integration)
+12. [Client-Side Data Flow](#12-client-side-data-flow)
+13. [Loading and Error Handling](#13-loading-and-error-handling)
+14. [Current Page Implementation Status](#14-current-page-implementation-status)
+15. [Known Future Frontend Work](#15-known-future-frontend-work)
 
 ---
 
-### 2. Auth
+## 1. Document Status
 
-**Responsibility:** Handled entirely by Clerk. GitPulse does not own auth UI — sign-in and sign-up are Clerk-hosted or Clerk-component pages.
+This document describes the **currently implemented** routes, pages, components, and frontend behavior.
 
-**Post-auth behavior:**
-- New users: receive starting credits (see `01_PROJECT_BLUEPRINT.md`, Open Assumptions #1); land on the Dashboard or a "Create your first project" prompt.
-- Returning users: land on the Dashboard for their last active project, or a project list if no project is selected.
+It does **not** cover visual design (colors, typography, animations) — that is `02_UI_DESIGN_SYSTEM.md`.
 
-> Exact redirect routes, Clerk configuration, and middleware: **To be completed after tutorial implementation (Phase 2).**
+It does **not** cover backend internals — that is `04_BACKEND_AND_RAG.md`.
 
 ---
 
-### 3. Dashboard (Project View)
+## 2. Application Route Overview
 
-**Responsibility:** The primary day-to-day view for a linked repository. Surfaces the most recent activity and provides the entry point for core interactions.
-
-**Key responsibilities:**
-- Display which GitHub repository this project is linked to (repo URL banner).
-- Surface project management actions: Invite collaborators, Archive project.
-- Provide an "Ask a question" entry point that routes to Q&A (or opens an inline prompt).
-- Display a commit feed: avatar, author name, commit message, "View on GitHub" link, relative timestamp, and the AI-generated commit summary.
-
-**Navigation concepts:**
-- Accessible from the sidebar under the project name.
-- Each project in the sidebar "Your Projects" list navigates to that project's Dashboard.
-
-> Route paths, page hierarchy, folder structure, component hierarchy, exact commit feed implementation, and dialog hierarchy: **To be completed after tutorial implementation.**
-
----
-
-### 4. Q&A
-
-**Responsibility:** The core RAG interaction surface. Users ask natural-language questions about the codebase and receive AI-generated answers grounded in indexed source files. All previous Q&A pairs for the project are listed below the input.
-
-**Key responsibilities:**
-- A question textarea with a primary "Ask GitPulse!" CTA.
-- Submit triggers the `qa.askQuestion` tRPC mutation: embed → pgvector search → Gemini generation → save.
-- Saved Questions list below: avatar, question text, AI answer preview, relative timestamp. Clicking a saved question expands the full answer (modal or inline expand — TBD).
-- Credit deduction handling: surface an error if the user has insufficient credits.
-
-**Navigation concepts:**
-- Accessible from the sidebar "Q&A" nav item, scoped to the currently active project.
-
-> Route paths, component hierarchy, exact answer-expansion pattern (modal vs. inline), file-reference display: **To be completed after tutorial implementation.**
+| Route | File | Access | Purpose | Status |
+|---|---|---|---|---|
+| `/` | `src/app/page.tsx` | Public | Home/landing page | ✅ Placeholder page |
+| `/auth/login` | `src/app/auth/login/page.tsx` | Public | User login | ✅ Implemented |
+| `/auth/signup` | `src/app/auth/signup/page.tsx` | Public | User registration | ✅ Implemented |
+| `/dashboard` | `src/app/(protected)/dashboard/page.tsx` | Protected | Main dashboard with Commit Log + Ask Question | ✅ Implemented |
+| `/create-project` | `src/app/(protected)/create-project/page.tsx` | Protected | Link a new GitHub repository | ✅ Implemented |
+| `/QA` | `src/app/(protected)/QA/page.tsx` | Protected | QA page placeholder | 🟡 Placeholder |
+| `/api/auth/[...all]` | `src/app/api/auth/[...all]/route.ts` | — | Better Auth API handler | ✅ Implemented |
+| `/api/project` | `src/app/api/project/route.ts` | Auth required | Create/list projects | ✅ Implemented |
+| `/api/commits` | `src/app/api/commits/route.ts` | Auth required | Fetch commits for a project | ✅ Implemented |
+| `/api/QA` | `src/app/api/QA/route.ts` | Auth not checked (projectId validates scope) | RAG Q&A streaming endpoint | ✅ Implemented |
 
 ---
 
-### 5. Billing
+## 3. Root Application Structure
 
-**Responsibility:** Credit balance management and payment. Users see their current credits, understand how they are spent, purchase more, and review transaction history.
+### `src/app/layout.tsx`
 
-**Key responsibilities:**
-- Credits remaining display (prominent, top of page).
-- Informational banner explaining the credit-per-file indexing rule and any other credit costs.
-- Credit purchase UI: a slider or bundle selector showing cost → credit amount; "Buy X Credits for $Y" primary CTA.
-- Stripe checkout: triggered by the purchase CTA, handled via a tRPC mutation → Stripe Payment Intent or Checkout Session → redirect or embedded modal.
-- Transaction History list: date, credit amount added, dollar amount, payment status.
+Root Next.js layout. Applies globally to every page.
 
-**Navigation concepts:**
-- Accessible from the sidebar "Billing" nav item.
-- Not project-scoped — applies to the user's account across all projects.
+- Loads **Space Grotesk** (weights 300–700, via `Space_Grotesk` from `next/font/google`) and **Geist** (sans-serif, via `Geist` from `next/font/google`) fonts. Both are exposed as CSS variables.
+- Sets the root `<html>` language and applies both font CSS variables to the `<html>` tag.
+- Wraps all children in `<Providers>`.
+- Renders `<Toaster />` (Sonner) **inside the root layout** alongside `<Providers>` — not inside the Providers component itself.
 
-> Route paths, Stripe implementation specifics (Payment Intent vs. Checkout Session), slider vs. bundle UI, webhook route structure: **To be completed after tutorial implementation.**
+### `src/components/providers.tsx`
 
----
+Client-side provider wrapper. Currently wraps the app with:
+- **TanStack React Query** `QueryClientProvider` — enables data fetching, caching, and invalidation across the app.
 
-### 6. Create / Link Repository
+### `src/app/page.tsx`
 
-**Responsibility:** Onboarding a new GitHub repository into GitPulse. This is the primary onboarding step for new users and for users adding additional projects.
-
-**Key responsibilities:**
-- Form fields: Project name (display name), GitHub Repository URL, optional GitHub Personal Access Token (for private repos).
-- Credit-cost warning banner: show how many credits indexing will cost based on the repo's estimated file count (or a static warning if file count is unknown pre-index).
-- "Create Project" primary CTA: submits the form, triggers the `project.create` tRPC mutation, which starts the indexing job in the background.
-- Validation: URL format, required fields, token format (optional).
-- Feedback: loading state during creation, success redirect to the new project's Dashboard, error handling for invalid repos or insufficient credits.
-
-**Navigation concepts:**
-- Triggered from the "+ Create Project" sidebar item.
-
-> Route paths, folder structure, form component hierarchy, background job handling (queue vs. inline async): **To be completed after tutorial implementation.**
+Public home/landing page. Currently a placeholder — contains basic content but no full landing page implementation yet.
 
 ---
 
-### 7. Workspace (Stub → Phase 4 Module)
+## 4. Authentication Pages
 
-**Responsibility:** During Phase 1 (tutorial implementation), this is a **stub placeholder page only** — a simple page with the correct sidebar nav item rendering and a “Coming Soon” state. The real Workspace module (Pull Request Intelligence + Issue Intelligence) is designed and built in Phase 4.
+Authentication is fully implemented using **Better Auth**.
 
-**Concept (for planning purposes only):**
+### Login — `/auth/login`
 
-The Workspace is an AI-powered GitHub companion. It is organized into two tabs: **Pull Requests** and **Issues**.
+**File:** `src/app/auth/login/page.tsx`
 
-- **Pull Requests tab:** Lists PRs fetched from the GitHub API for the active project. Each row shows: PR title, status badge (Open / Closed / Merged), author, relative date, AI summary preview, “View Details” and “Open on GitHub” actions. Clicking a row opens a detail modal with full AI summary, changed files list, module-impact notes, breaking-change flags, and a link to GitHub.
+**Purpose:** Allows existing users to log into their account.
 
-- **Issues tab:** Lists GitHub Issues for the active project. Each row shows: issue title, priority badge (Low / Medium / High, AI-predicted), status, AI summary preview, “View Details” and “Open on GitHub” actions. Detail modal shows full AI summary, detected duplicates, suggested labels, priority reasoning, affected-module recommendation, and a link to GitHub.
+**Behavior:**
+- Email/password login form
+- Google OAuth button (calls `authClient.signIn.social({ provider: "google" })`)
+- GitHub OAuth button (calls `authClient.signIn.social({ provider: "github" })`)
+- Successful authentication → redirected to `/dashboard`
+- Errors displayed inline (invalid credentials, server error)
 
-- **Search & Filtering:** Semantic search bar + filter controls (state, priority, author, label) scoped to the active project’s PRs or Issues.
-
-**Hard rule for planning docs:** Do not define route names, folder structure, component hierarchy, tRPC procedures, Prisma models, database schema, dialogs, animations, loading states, file names, or any implementation detail for the Workspace module. All of these are derived from the completed codebase in Phase 4/5.
+**Integration:** Uses `authClient` from `src/lib/auth-client.ts` → communicates with `/api/auth/[...all]` → Better Auth API handler → session created in PostgreSQL.
 
 ---
 
-## Sidebar Navigation Structure
+### Signup — `/auth/signup`
 
-The persistent sidebar — visible in all authenticated views — contains:
+**File:** `src/app/auth/signup/page.tsx`
+
+**Purpose:** Allows new users to create an account.
+
+**Behavior:**
+- Email, password, (name) form fields
+- `react-hook-form` for form state management
+- Calls `authClient.signUp.email()` on submit
+- Successful signup → session created → redirected to dashboard
+- Validation errors shown inline
+
+---
+
+## 5. Protected Application Shell
+
+### Protected Layout Group
+
+**File:** `src/app/(protected)/layout.tsx`
+
+All routes inside `(protected)/` use this layout. It:
+
+1. Calls `auth.api.getSession({ headers })` server-side to verify the session.
+2. If no session → redirects to `/auth/login`.
+3. If session valid → renders the full dashboard shell.
+4. Renders the **AppSidebar** and **top bar**.
+5. Wraps content in a scrollable main area.
+
+### Route Protection Mechanism
 
 ```
-┌─────────────────────────────┐
-│  [GitPulse Logo]            │
-├─────────────────────────────┤
-│  LayoutDashboard  Dashboard │
-│  MessageSquare    Q&A       │
-│  GitPullRequest   Workspace │
-│  CreditCard       Billing   │
-├─────────────────────────────┤
-│  YOUR PROJECTS              │
-│  [Avatar] Project A         │
-│  [Avatar] Project B         │
-│  [Avatar] Project C         │
-├─────────────────────────────┤
-│  Plus  + Create Project     │
-└─────────────────────────────┘
+Request to /dashboard
+    ↓
+(protected)/layout.tsx
+    ↓
+auth.api.getSession() → checks session cookie
+    ↓ no session
+Redirect → /auth/login
+
+    ↓ valid session
+Render sidebar + content
 ```
 
-- Active nav item: gradient-accent pill background + left-edge accent bar + accent-colored icon (see `02_UI_DESIGN_SYSTEM.md` Section 9).
-- Project list items: colored avatar with initials (deterministic HSL from project name) + project display name.
-- Clicking a project in the list switches the active project context for Dashboard, Q&A, and Workspace.
-
-> Sidebar component location, project context state management (global store, URL param, or cookie), and project-switching behavior: **To be completed after tutorial implementation (Phase 2).**
+No middleware file — protection is implemented at the layout level using server-side session checking.
 
 ---
 
-## Open Questions & Implementation Notes
+## 6. Dashboard
 
-1. **Project context:** How is the "active project" persisted between navigations — via URL param (e.g. `/dashboard?projectId=...`), a route segment (e.g. `/dashboard/[projectId]`), or a client-side global store? This determines the entire routing structure. **To be completed after tutorial implementation.**
+**File:** `src/app/(protected)/dashboard/page.tsx`
 
-2. **Indexing job:** Is repository indexing handled inline (async within the tRPC mutation, blocking the response) or via a background queue? This affects loading state design. **To be completed after tutorial implementation.**
+**Type:** Client component (`"use client"`)
 
-3. **Q&A answer expansion:** Does clicking a saved question open a modal (like the reference screenshots suggest) or expand inline? **To be completed after tutorial implementation.**
+### Purpose
 
-4. **Stripe integration:** Payment Intent (embedded) vs. Checkout Session (redirect)? **To be completed after tutorial implementation.** <!-- ASSUMPTION: Checkout Session redirect is simpler and assumed for the tutorial path. -->
+Main workspace for an authenticated user. Displays:
+- The linked GitHub repository URL as a banner
+- The Ask Question card
+- The Commit Log
 
-5. **Workspace stub page:** The stub must be in place after Phase 1 so the sidebar nav item renders without errors. Its exact form (empty state component, "Coming Soon" copy) is a minor implementation detail left to the tutorial step.
+### Data Source
+
+Uses the `useProject()` hook (`src/hooks/use-project.ts`) to get the currently selected project from React Query cache.
+
+### Component Hierarchy
+
+```
+DashboardPage
+├── GitHub Repository Banner
+│       └── Link to GitHub URL (ExternalLink icon)
+├── Grid Layout (grid-cols-5)
+│   └── AskQuestionCard    (spans 3 cols)
+│       (WorkspaceCard — commented out, not yet implemented)
+└── CommitLog
+```
+
+### Key Behaviors
+
+- If `project` is null (no project selected), the banner URL is empty and Ask Question is non-functional (guards `if (!project?.id) return`).
+- Dashboard is client-rendered with no SSR data fetching — all data comes from React Query hooks.
+- Several components are commented out (TeamMembers, InviteButton, ArchiveButton, WorkSpaceCard) — not yet implemented.
 
 ---
 
-*Next update: Phase 2 — after tutorial implementation is complete. Sections marked “To be completed” will be filled in with real routes, file paths, component hierarchy, and implementation specifics derived from the actual codebase. Phase 5 will add the Workspace page spec.*
+## 7. Ask Question Feature
+
+**File:** `src/app/(protected)/dashboard/ask-question-card.tsx`
+
+**Type:** Client component (`"use client"`)
+
+This is the primary implemented AI interaction feature.
+
+### Component State
+
+| State | Type | Purpose |
+|---|---|---|
+| `open` | `boolean` | Controls the Dialog open/close |
+| `question` | `string` | Text input controlled value |
+| `loading` | `boolean` | Whether a Q&A request is in flight |
+| `answer` | `string` | Accumulated streaming answer text |
+| `filesReferences` | `{ fileName, filePath, chunkIndex, similarity }[]` | Parsed file references from response header |
+
+### Submission Flow — Step by Step
+
+```
+User submits the form (onSubmit)
+    ↓
+e.preventDefault()
+if (!project?.id) return   ← guard: no project selected
+    ↓
+setLoading(true)
+setOpen(true)              ← Dialog opens immediately
+setAnswer("")              ← clear previous answer
+setFilesReferences([])     ← clear previous references
+    ↓
+toast.loading("GitPulse is thinking…")
+    ↓
+POST /api/QA
+    body: { question: string, projectId: string }
+    Content-Type: application/json
+    ↓
+if (!res.ok)
+    → parse error body
+    → throw Error with message
+    ↓
+Read X-File-References header
+    res.headers.get("X-File-References")
+    → JSON.parse() → setFilesReferences()
+    → fallback: setFilesReferences([]) on parse failure
+    ↓
+if (!res.body) → throw Error("No response body")
+    ↓
+res.body.getReader()       ← ReadableStream reader
+new TextDecoder()
+    ↓
+Loop:
+    const { done, value } = await reader.read()
+    if done → break
+    const text = decoder.decode(value, { stream: true })
+    setAnswer(prev => prev + text)    ← incremental append
+    ↓
+toast.success("Answer ready!")
+    ↓
+catch (error):
+    toast.error(message)
+    setOpen(false)
+finally:
+    setLoading(false)
+```
+
+### Current Dialog Content
+
+The Dialog currently renders for testing purposes:
+- The raw `answer` string (plain text, no Markdown rendering)
+- An `<h1>Files References</h1>` heading
+- A `<span>` for each `filesReference.fileName`
+
+This is intentionally minimal — proper styled rendering is planned in a future phase.
+
+### Why the Header is Read Before the Body
+
+The `X-File-References` header must be parsed **before** `res.body` is consumed. Once the stream starts being read, some browser implementations may not guarantee header availability. Reading the header immediately after checking `res.ok` ensures it is always available.
+
+### Why `sourceCode` is NOT in the References
+
+Source code from retrieved chunks can contain Unicode characters (em dashes, smart quotes, etc.) that exceed the ASCII/Latin-1 limit of HTTP header values. Including `sourceCode` caused a `ByteString` error (`character at index N has value > 255`). File references contain only lightweight metadata.
+
+---
+
+## 8. Create Project Page
+
+**File:** `src/app/(protected)/create-project/page.tsx`
+
+**Type:** Client component (`"use client"`)
+
+### Form Fields
+
+| Field | Input | Required | Notes |
+|---|---|---|---|
+| `projectName` | Text input | ✅ Yes | Display name for the project |
+| `repoUrl` | URL input | ✅ Yes | Full GitHub repository URL |
+| `githubToken` | Text input | ❌ Optional | PAT for private repos or higher rate limits |
+
+**Form Library:** `react-hook-form` — handles registration, validation, and reset.
+
+### Submission Flow
+
+```
+User fills form → submits
+    ↓
+handleSubmit(onSubmit) ← react-hook-form validates required fields
+    ↓
+setIsLoading(true) → button disabled + "Creating..." text
+    ↓
+axios.post("/api/project", { projectName, repoUrl, githubToken })
+    ↓
+await refetch()         ← invalidates React Query cache → sidebar refreshes
+toast.success("Project created successfully")
+    ↓
+if (res.data.commitSyncError)
+    → toast.warning(commitSyncError, { duration: 6000 })
+    (project still saved; commits may be unavailable)
+    ↓
+reset()                 ← clears the form
+    ↓
+catch (error):
+    parse error body if AxiosError
+    toast.error(message)
+finally:
+    setIsLoading(false)
+```
+
+### Important Behaviors
+
+- Project creation succeeds even if commit synchronization fails (graceful error handling in the API).
+- A `commitSyncError` warning toast appears when the API returns it (e.g., GitHub rate limit or private repo without token).
+- There is no navigation redirect after creation — the form resets in place. The sidebar updates via React Query refetch.
+- Empty string GitHub token is treated as `undefined` server-side.
+
+---
+
+## 9. Commit Log
+
+**File:** `src/app/(protected)/dashboard/commit-log.tsx`
+
+**Type:** Client component (`"use client"`)
+
+### Purpose
+
+Displays the AI-summarized commit history for the currently selected project.
+
+### Data Fetching
+
+Uses TanStack React Query (`useQuery`) to fetch commits:
+
+```typescript
+useQuery({
+    queryKey: ["commits", projectId],
+    queryFn: async () => {
+        const response = await axios.get<Commit[]>("/api/commits", {
+            params: { projectId },
+        });
+        return response.data;
+    },
+    enabled: !!projectId,   // only runs if a project is selected
+})
+```
+
+Query key `["commits", projectId]` means commits refresh when the selected project changes.
+
+### Rendered Commit Fields
+
+| Field | Displayed As |
+|---|---|
+| `commitAuthorAvatar` | Circular author avatar image |
+| `commitAuthorName` | Author name text |
+| `commitHash` | Used to construct the GitHub commit link |
+| `commitMessage` | Bold commit message |
+| `summary` | Pre-formatted AI-generated bullet points |
+
+### States
+
+| State | Display |
+|---|---|
+| Loading | `<p>Loading commits...</p>` |
+| Empty | `<p>No commits found.</p>` |
+| Data | Vertical timeline list of commits |
+
+### Commit Link
+
+Each commit author links to `${project.githubUrl}/commit/${commit.commitHash}` — opens the GitHub commit page in a new tab.
+
+### Summary Display
+
+The `summary` field (AI-generated bullet points) is rendered inside a `<pre>` tag with `whitespace-pre-wrap` — preserves the `* bullet` line format from the Gemini summarization prompt.
+
+---
+
+## 10. Sidebar and Shared Components
+
+### AppSidebar
+
+**File:** `src/components/appsidebar.tsx`
+
+The main navigation sidebar. Contains:
+- GitPulse brand identity
+- Navigation items (Dashboard, Q&A, etc.)
+- Project list from user's projects
+- Create Project link
+- User button
+
+Uses shadcn `Sidebar` primitives from `src/components/ui/sidebar.tsx`.
+
+### UserButton
+
+**File:** `src/components/user-button.tsx`
+
+Displayed in the sidebar or top bar. Shows:
+- User avatar/image
+- User name or email
+- Logout action (`authClient.signOut()`)
+
+### useProject Hook
+
+**File:** `src/hooks/use-project.ts`
+
+Manages project selection state. Provides:
+- `project` — the currently selected project object
+- `projectId` — the ID of the selected project
+- Projects are fetched from `/api/project` via React Query.
+
+### useRefetch Hook
+
+**File:** `src/hooks/use-refetch.ts`
+
+Provides a `refetch()` function that invalidates React Query caches (e.g., used after project creation to refresh the sidebar project list).
+
+### UI Components (`src/components/ui/`)
+
+All from **shadcn** — copied directly into the project:
+
+| Component | Used In |
+|---|---|
+| `button.tsx` | All forms and actions |
+| `card.tsx` | AskQuestionCard, dashboard sections |
+| `checkbox.tsx` | Forms |
+| `dialog.tsx` | Q&A answer dialog |
+| `input.tsx` | Create Project form |
+| `label.tsx` | Forms |
+| `separator.tsx` | Layout |
+| `sheet.tsx` | Mobile sidebar drawer |
+| `sidebar.tsx` | AppSidebar primitives |
+| `skeleton.tsx` | Loading states |
+| `textarea.tsx` | Q&A question input |
+| `tooltip.tsx` | Hover hints |
+
+---
+
+## 11. Frontend-to-API Integration
+
+| Frontend Component | API Route | Method | Purpose |
+|---|---|---|---|
+| Login page | `/api/auth/[...all]` | POST | Better Auth sign-in |
+| Signup page | `/api/auth/[...all]` | POST | Better Auth sign-up |
+| UserButton | `/api/auth/[...all]` | POST | Better Auth sign-out |
+| Create Project page | `/api/project` | POST | Create project + trigger commit sync + background indexing |
+| AppSidebar / useProject hook | `/api/project` | GET | Fetch user's projects |
+| CommitLog | `/api/commits` | GET `?projectId` | Fetch commits for selected project |
+| AskQuestionCard | `/api/QA` | POST | Submit question, receive stream + file references |
+
+---
+
+## 12. Client-Side Data Flow
+
+### Project Selection Flow
+
+```
+App mounts
+    ↓
+useProject() → React Query fetches GET /api/project
+    ↓
+Projects stored in Query cache
+    ↓
+AppSidebar renders project list
+User selects a project
+    ↓
+projectId stored in hook state
+    ↓
+CommitLog useQuery: enabled when projectId exists
+    → GET /api/commits?projectId=...
+    ↓
+Commits rendered in timeline
+```
+
+### Q&A Data Flow
+
+```
+User types question → setQuestion(value)
+    ↓
+User submits form → onSubmit()
+    ↓
+setLoading(true), setOpen(true), setAnswer(""), setFilesReferences([])
+    ↓
+fetch POST /api/QA { question, projectId }
+    ↓
+Response arrives (header first)
+    ↓
+Parse X-File-References → setFilesReferences(parsed)
+    ↓
+Read body stream incrementally
+    for each chunk:
+        setAnswer(prev => prev + decoded_text)
+    ↓
+Dialog displays answer as it streams
+    ↓
+Stream ends → toast.success()
+```
+
+### Project Creation Data Flow
+
+```
+User fills Create Project form
+    ↓
+handleSubmit → axios.post("/api/project", data)
+    ↓
+API returns 201 { success, project, commitSyncError? }
+    ↓
+refetch() → invalidates useProject query → sidebar refreshes
+    ↓
+toast.success()
+if commitSyncError → toast.warning(message)
+    ↓
+reset() → form cleared
+```
+
+---
+
+## 13. Loading and Error Handling
+
+### Loading States
+
+| Component | Loading Behavior |
+|---|---|
+| Create Project form | Button disabled + text "Creating..." |
+| CommitLog | `<p>Loading commits...</p>` text |
+| AskQuestionCard | `toast.loading("GitPulse is thinking…")` — persisted during stream |
+| Sidebar project list | React Query loading state (no explicit skeleton currently) |
+
+### Error Handling
+
+| Scenario | Behavior |
+|---|---|
+| Login failure | Inline error message from Better Auth |
+| Signup failure | Inline error message |
+| Project creation API error | `toast.error(message)` from error response body |
+| GitHub rate limit on commit sync | `commitSyncError` returned in 201 response → `toast.warning()` |
+| Q&A: non-OK response | Parse error body → `toast.error(message)`, Dialog closes |
+| Q&A: stream missing body | `throw new Error("No response body")` → `toast.error` |
+| Q&A: header parse failure | Caught silently → `setFilesReferences([])` fallback |
+| Q&A: general error | `toast.error(message)`, `setOpen(false)` |
+| Commit fetch failure | React Query error state (no explicit UI for this currently) |
+
+---
+
+## 14. Current Page Implementation Status
+
+| Page / Feature | Status | Notes |
+|---|---|---|
+| Landing page (`/`) | 🟡 Placeholder | Basic content, no full landing page |
+| Login page | ✅ Implemented | Email + Google + GitHub OAuth |
+| Signup page | ✅ Implemented | Email/password |
+| Protected layout | ✅ Implemented | Session check + redirect |
+| AppSidebar | ✅ Implemented | Navigation + project list |
+| Dashboard page | ✅ Implemented | Banner + grid layout |
+| Ask Question card | ✅ Implemented | Form + streaming dialog |
+| Q&A Dialog | 🟡 Partial | Raw text answer + plain file name list |
+| Commit Log | ✅ Implemented | Timeline with AI summaries |
+| Create Project page | ✅ Implemented | Form with optional token |
+| QA page (`/QA`) | 🟡 Placeholder | Exists but minimal content |
+| Markdown rendering | ⚪ Not implemented | Answer shown as plain text |
+| File reference panel | 🟡 Partial | File names only, no styled panel |
+| Credits display | ⚪ Not implemented | Planned |
+| Team members | ⚪ Not implemented | Component commented out |
+| Invite button | ⚪ Not implemented | Component commented out |
+| Archive project | ⚪ Not implemented | Component commented out |
+| Workspace card | ⚪ Not implemented | Component commented out |
+
+---
+
+## 15. Known Future Frontend Work
+
+### Immediate Next Steps
+
+- **Markdown rendering for Q&A answers:** Replace plain text with `react-markdown` or similar. Add syntax-highlighted code blocks (e.g., `react-syntax-highlighter` or `shiki`).
+- **File reference panel:** Replace raw `<span>` list with a styled panel showing file name, path, and similarity score. Potentially syntax-highlight the relevant chunk on click.
+- **Q&A Dialog polish:** Style the Dialog header with GitPulse branding. Add copy-to-clipboard for answers.
+
+### Medium-Term
+
+- **Credits display:** Show `User.credits` in the sidebar or top bar.
+- **Full landing page:** Implement the design from `02_UI_DESIGN_SYSTEM.md`.
+- **Workspace module:** PR list, issue list, AI summaries for PRs and issues.
+- **Loading skeletons:** Replace plain text loading states with skeleton components.
+
+### Longer-Term
+
+- **Conversation history:** Save Q&A conversations per project.
+- **Multi-project Q&A:** Ask questions across multiple linked repositories.
+- **Project settings:** Manage linked GitHub token, rename project, delete project.
+- **Responsive mobile improvements:** Full mobile-first layout review.
