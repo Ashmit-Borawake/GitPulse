@@ -3,6 +3,7 @@
 <p align="center">AI-powered GitHub repository intelligence — understand any codebase in seconds.</p>
 
 <p align="center">
+  <img src="https://img.shields.io/badge/status-in%20progress-yellow?style=flat-square" />
   <img src="https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=next.js" />
   <img src="https://img.shields.io/badge/Google_Gemini-AI-blue?style=flat-square&logo=google" />
   <img src="https://img.shields.io/badge/pgvector-PostgreSQL-336791?style=flat-square&logo=postgresql" />
