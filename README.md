@@ -1,9 +1,12 @@
 <h1 align="center">🔮 GitPulse</h1>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/🚧%20Work%20In%20Progress-yellow?style=for-the-badge" />
+</p>
+
 <p align="center">AI-powered GitHub repository intelligence — understand any codebase in seconds.</p>
 
-<p align="center">
-  <img src="https://img.shields.io/badge/status-in%20progress-yellow?style=flat-square" />
+<p align="center">  
   <img src="https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=next.js" />
   <img src="https://img.shields.io/badge/Google_Gemini-AI-blue?style=flat-square&logo=google" />
   <img src="https://img.shields.io/badge/pgvector-PostgreSQL-336791?style=flat-square&logo=postgresql" />
@@ -171,12 +174,6 @@ gitpulse/
 | `UserToProject` | Many-to-many user↔project membership |
 | `Commit` | Git commits with AI-generated summaries |
 | `SourceCodeEmbedding` | Chunked source code + `vector(768)` embeddings |
-
----
-
-## License
-
-MIT — see [LICENSE](LICENSE)
 
 ---
 
