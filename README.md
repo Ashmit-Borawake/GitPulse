@@ -173,43 +173,6 @@ gitpulse/
 
 ---
 
-## Status
-
-| Feature | Status |
-|---|---|
-| Email + OAuth authentication | ✅ |
-| Create & list projects | ✅ |
-| AI commit summarization | ✅ |
-| Repository indexing (RAG) | ✅ |
-| RAG Q&A with streaming | ✅ |
-| File reference tracking | ✅ |
-| Markdown rendering in answers | 🟡 Planned |
-| Credits deduction UI | 🟡 Planned |
-| Full landing page | 🟡 Planned |
-| Workspace (PR & Issue AI) | ⚪ Future |
-
----
-
-## Roadmap
-
-- [ ] Markdown + syntax highlighting in Q&A dialog
-- [ ] Styled file reference panel with chunk preview
-- [ ] Credits display and deduction
-- [ ] Q&A conversation history per project
-- [ ] PR & Issue Intelligence (Workspace module)
-- [ ] Stripe billing for credit top-ups
-
----
-
-## Contributing
-
-1. Fork the repo
-2. Create a branch (`git checkout -b feature/my-feature`)
-3. Commit and push
-4. Open a Pull Request
-
----
-
 ## License
 
 MIT — see [LICENSE](LICENSE)
