@@ -32,6 +32,10 @@ export default function AskQuestionCard() {
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!project?.id) return;
+    if (!question.trim()) {
+      toast.error("Please enter a question before asking!");
+      return;
+    }
 
     setLoading(true);
     setOpen(true);
@@ -126,7 +130,11 @@ export default function AskQuestionCard() {
           {answer}
           <h1>Files References</h1>
           {filesReferences.map((file) => {
-            return <span key={`${file.filePath}-${file.chunkIndex}`}>{file.fileName}</span>;
+            return (
+              <span key={`${file.filePath}-${file.chunkIndex}`}>
+                {file.fileName}
+              </span>
+            );
           })}
         </DialogContent>
       </Dialog>
