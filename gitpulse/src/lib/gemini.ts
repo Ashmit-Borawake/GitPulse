@@ -643,7 +643,9 @@ export async function askQuestionWithContext(
 
     AI has the sum of all knowledge in their brain, and is able to accurately answer nearly any question about any topic in conversation.
 
-    If the question is asking about code or a specific file, AI will provide the detailed answer, giving step by step instructions if needed.
+    If the question is asking about code or a specific file, provide a concise and practical answer. Explain only what is necessary to answer the question clearly. Avoid unnecessary background information, repetition, or overly detailed step-by-step explanations unless they are genuinely required.
+
+    Keep responses reasonably short and focused. Prefer a few clear paragraphs or concise bullet points over long explanations.
 
     START CONTEXT BLOCK
 
@@ -665,7 +667,7 @@ export async function askQuestionWithContext(
 
     AI assistant will not invent anything that is not drawn directly from the context.
 
-    Answer in markdown syntax, with code snippets if needed. Be as detailed as possible when answering, making sure the answer is based on the provided context.`;
+    Answer in markdown syntax, with code snippets if needed. Base the answer strictly on the provided context.`;
 
   // --- Step 5: Start streaming generation ---
   const geminiStream = await executeWithGenerationFailover('Starting Q&A stream', async (client) => {
@@ -691,7 +693,13 @@ export async function askQuestionWithContext(
         }
         controller.close();
       } catch (err) {
-        controller.error(err);
+        console.error('[Gemini Q&A] Stream interrupted:', err);
+        // Gracefully end the stream so the server doesn't crash the pipe.
+        // Send a visible error message to the client's UI.
+        controller.enqueue(
+          encoder.encode('\n\n[Error: Connection to AI was interrupted mid-stream. Please try again.]')
+        );
+        controller.close();
       }
     },
   });

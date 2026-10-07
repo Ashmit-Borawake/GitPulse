@@ -13,6 +13,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useProject } from "@/hooks/use-project";
 import React from "react";
 import { toast } from "sonner";
+import MDEditor from "@uiw/react-md-editor";
+import CodeReferences, { type CodeFileReference } from "./code-references";
 
 export default function AskQuestionCard() {
   const { project } = useProject();
@@ -21,12 +23,7 @@ export default function AskQuestionCard() {
   const [loading, setLoading] = React.useState(false);
   const [answer, setAnswer] = React.useState("");
   const [filesReferences, setFilesReferences] = React.useState<
-    {
-      fileName: string;
-      filePath: string;
-      chunkIndex: number;
-      similarity: number;
-    }[]
+    CodeFileReference[]
   >([]);
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -76,12 +73,7 @@ export default function AskQuestionCard() {
         ) as unknown;
         setFilesReferences(
           Array.isArray(parsed)
-            ? (parsed as {
-                fileName: string;
-                filePath: string;
-                chunkIndex: number;
-                similarity: number;
-              }[])
+            ? (parsed as CodeFileReference[])
             : [],
         );
       } catch {
@@ -115,29 +107,68 @@ export default function AskQuestionCard() {
 
   return (
     <>
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+      <Dialog 
+        open={open} 
+        onOpenChange={setOpen}
+        disablePointerDismissal
+      >
+        <DialogContent className="sm:max-w-[90vw] max-h-[90vh] border-2 border-black p-0 overflow-hidden block">
+          <div className="w-full max-h-[90vh] overflow-y-auto p-4 grid gap-4 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-300 dark:[&::-webkit-scrollbar-thumb]:bg-gray-700">
           <DialogHeader>
             <DialogTitle>
               <div className="flex items-center gap-2">
                 <div className="bg-primary text-primary-foreground flex h-8 w-8 items-center justify-center rounded-md font-bold">
                   G
                 </div>
+                <span className="text-base font-semibold">GitPulse</span>
               </div>
             </DialogTitle>
           </DialogHeader>
 
-          {answer}
-          <h1>Files References</h1>
-          {filesReferences.map((file) => {
-            return (
-              <span key={`${file.filePath}-${file.chunkIndex}`}>
-                {file.fileName}
-              </span>
-            );
-          })}
+          {/* Answer area — loader until first chunk arrives */}
+          {loading && !answer ? (
+            <div className="flex items-center justify-center py-10">
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 animate-bounce rounded-full bg-primary [animation-delay:-0.3s]" />
+                <div className="h-2 w-2 animate-bounce rounded-full bg-primary [animation-delay:-0.15s]" />
+                <div className="h-2 w-2 animate-bounce rounded-full bg-primary" />
+              </div>
+            </div>
+          ) : (
+            <div data-color-mode="light">
+              <MDEditor.Markdown
+                source={answer}
+                className="w-full rounded-lg p-4 text-sm"
+              />
+            </div>
+          )}
+
+          {/* Code references — shown only after streaming is complete */}
+          {!loading && filesReferences.length > 0 && project?.id && (
+            <CodeReferences
+              filesReferences={filesReferences}
+              projectId={project.id}
+            />
+          )}
+
+          <div className="h-2" />
+
+          {/* Close button */}
+          <Button
+            type="button"
+            className="w-full bg-black text-white hover:bg-black/90 cursor-pointer"
+            onClick={() => {
+              setOpen(false);
+              setAnswer("");
+              setFilesReferences([]);
+            }}
+          >
+            Close
+          </Button>
+          </div>
         </DialogContent>
       </Dialog>
+
       <Card className="relative col-span-3">
         <CardHeader>
           <CardTitle>Ask a question</CardTitle>
@@ -150,7 +181,7 @@ export default function AskQuestionCard() {
               onChange={(e) => setQuestion(e.target.value)}
             />
             <div className="h-4"></div>
-            <Button type="submit">Ask GitPulse !</Button>
+            <Button type="submit" disabled={loading}>Ask GitPulse !</Button>
           </form>
         </CardContent>
       </Card>
