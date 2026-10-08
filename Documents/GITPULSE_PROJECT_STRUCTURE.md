@@ -71,9 +71,10 @@ GitPulse/                          ← Monorepo root
     │   │   │   ├── dashboard/
     │   │   │   │   ├── page.tsx              ← Dashboard main page
     │   │   │   │   ├── commit-log.tsx        ← UI component displaying AI summarized commits
-    │   │   │   │   └── ask-question-card.tsx ← Q&A card: POSTs to /api/QA, reads X-File-References
-    │   │   │   │                                header synchronously, streams answer body via
-    │   │   │   │                                getReader()/TextDecoder; opens Dialog on submit
+    │   │   │   │   ├── ask-question-card.tsx ← Q&A card: POSTs to /api/QA, reads X-File-References
+    │   │   │   │   │                            header synchronously, streams answer body via
+    │   │   │   │   │                            getReader()/TextDecoder; opens Dialog on submit
+    │   │   │   │   └── code-references.tsx   ← Component to display file references using Tabs
     │   │   │   └── create-project/
     │   │   │       └── page.tsx   ← Create project UI form
     │   │   │
@@ -82,8 +83,9 @@ GitPulse/                          ← Monorepo root
     │   │       ├── project/route.ts        ← Project creation (POST) + listing (GET); triggers
     │   │       │                              pollCommits synchronously + indexGithubRepo in background
     │   │       ├── commits/route.ts        ← GET ?projectId — lists commits with ownership check
-    │   │       └── QA/route.ts             ← RAG Q&A API: validates request, calls gemini.ts,
-    │   │                                      returns streaming Response + X-File-References header
+    │   │       ├── QA/route.ts             ← RAG Q&A API: validates request, calls gemini.ts,
+    │   │       │                              returns streaming Response + X-File-References header
+    │   │       └── source-code/route.ts    ← GET ?projectId & filePath — reconstructs full file from embedding chunks
     │   │
     │   ├── components/
     │   │   ├── appsidebar.tsx     ← Dashboard Sidebar component
@@ -100,6 +102,7 @@ GitPulse/                          ← Monorepo root
     │   │       ├── sheet.tsx      ← Sheet / drawer (used by AppSidebar)
     │   │       ├── sidebar.tsx    ← shadcn Sidebar primitives
     │   │       ├── skeleton.tsx   ← Loading skeleton placeholder
+    │   │       ├── tabs.tsx       ← Base UI tabs component
     │   │       ├── textarea.tsx   ← Textarea input (used by ask-question-card.tsx)
     │   │       └── tooltip.tsx    ← Tooltip primitives
     │   │
@@ -176,6 +179,7 @@ Next.js **App Router** directory. Every folder with a `page.tsx` inside it becom
 | `app/api/project/` | `/api/project` | ✅ POST: create project + sync commits + background RAG indexing; GET: list user projects |
 | `app/api/commits/` | `/api/commits` | ✅ GET ?projectId — lists commits with membership ownership check |
 | `app/api/QA/` | `/api/QA` | ✅ RAG Q&A API — validates request, calls `gemini.ts`, returns streaming text body + `X-File-References` header |
+| `app/api/source-code/` | `/api/source-code` | ✅ GET ?projectId & filePath — returns reconstructed file from chunks |
 
 ---
 
@@ -424,6 +428,6 @@ The following environment variables are used at runtime. Variables marked ✅ ar
 6. **Q&A Backend (RAG retrieval + streaming)** — ✅ `POST /api/QA` validates request, calls `askQuestionWithContext()` in `gemini.ts`, which embeds the query, retrieves top-10 source-code chunks from pgvector, builds a grounded context, and streams the `gemini-3.6-flash` answer as a native `ReadableStream`. File references are returned in the `X-File-References` response header.
 7. **Ask Question UI (Frontend card)** — ✅ `ask-question-card.tsx` sends question + projectId to `/api/QA`, reads `X-File-References` header, consumes the streaming body via `getReader()` / `TextDecoder`, and stores the answer in state. Dialog opens on submit. Toasts show loading / success / error feedback.
 8. **Pipeline Logging** — ✅ Detailed `[GitHub Loader]`, `[Filter]`, `[Chunking]`, `[Embedding]`, `[Database]`, `[API QA]`, `[Gemini Q&A]` console logs throughout the entire pipeline. Prisma query logs silenced to reduce noise.
-9. **Q&A Answer Display** — **Next up:** Render the streamed `answer` inside the Dialog (Markdown rendering, code blocks). Display retrieved `filesReferences` as a file-reference panel.
+9. **Q&A Answer Display** — ✅ Render the streamed `answer` inside the Dialog with Markdown rendering. Display retrieved `filesReferences` as a file-reference panel using Tabs to fetch and show source code.
 10. **Credits System** — `User.credits` field is in the schema (default 150); deduction logic and UI display not yet implemented.
 11. **Dashboard Overview UI** — Expand dashboard data sections (Commit log and Ask Question card are complete; more sections to follow).

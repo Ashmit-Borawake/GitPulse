@@ -1,7 +1,7 @@
 # 01 — Project Blueprint
 
-> **Document Status:** Living document. Updated at the end of each development step.
-> Last meaningful update: **Step 1 — Initial planning.**
+> **Document Status:** Living document. Updated with final implemented architecture.
+> Last meaningful update: **Real Codebase Implementation (Phase 7).**
 
 ---
 
@@ -93,8 +93,8 @@ The Workspace is an AI-powered developer command center focused exclusively on G
 | Framework       | Next.js 15, App Router    | No Pages Router                       |
 | Language        | JavaScript / JSX only     | **No TypeScript anywhere**            |
 | Styling         | Tailwind CSS v4           |                                       |
-| API Layer       | tRPC                      |                                       |
-| Auth            | Clerk                     |                                       |
+| API Layer       | Next.js API Routes (REST)|                                       |
+| Auth            | Better Auth               |                                       |
 | ORM             | Prisma                    |                                       |
 | Database        | PostgreSQL + `pgvector`   | Single DB, no separate vector service |
 | AI / RAG        | LangChain + Google Gemini | Embeddings & generation               |
@@ -115,11 +115,10 @@ Browser (Next.js App Router)
         │  React Server Components + Client Components
         │
         ▼
-   tRPC API Layer
+   Next.js API Routes (REST)
         │
         ├── Prisma ORM ──► PostgreSQL + pgvector
-        │                  (Users, Projects, Commits, Embeddings,
-        │                   Questions, Transactions, Credits)
+        │                  (Users, Projects, Commits, Embeddings)
         │
         ├── Google Gemini ◄── LangChain
         │   (embeddings + generation)
@@ -130,13 +129,13 @@ Browser (Next.js App Router)
         └── Stripe ──► Payment processing
                        (one-time credit top-ups)
 
-Auth: Clerk (wraps Next.js middleware + React hooks)
+Auth: Better Auth (wraps Next.js API routes)
 ```
 
 **Data flow for RAG Q&A:**
 
 1. User submits a question on the Q&A page.
-2. tRPC procedure embeds the question via Gemini.
+2. `POST /api/QA` embeds the question via Gemini.
 3. pgvector performs a cosine-similarity search over `SourceCodeEmbedding` rows for the active project.
 4. Top-K relevant chunks are retrieved and injected into a Gemini prompt.
 5. Gemini generates an answer grounded in the retrieved code.
@@ -144,13 +143,11 @@ Auth: Clerk (wraps Next.js middleware + React hooks)
 
 ---
 
-## 6. Draft Prisma Schema (Tutorial-Scoped Features)
+## 6. Prisma Schema (Implemented)
 
-> This is a working starting point derived from the tutorial's scope. It will be updated in Step 3 to reflect the real, implemented schema exactly.
+> This is the real, implemented schema using Better Auth and pgvector.
 
 ```prisma
-// schema.prisma (draft — to be replaced with real schema after Step 2)
-
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
@@ -159,142 +156,164 @@ generator client {
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  extensions = [pgvector(map: "vector")]
+  directUrl  = env("DIRECT_URL")
+  extensions = [vector]
 }
 
 model User {
-  id        String   @id @default(cuid())
-  clerkId   String   @unique
-  email     String   @unique
-  createdAt DateTime @default(now())
+  id             String          @id
+  name           String
+  email          String
+  emailVerified  Boolean         @default(false)
+  image          String?
+  firstName      String?
+  lastName       String?
+  credits        Int             @default(150)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  sessions       Session[]
+  accounts       Account[]
+  userToProjects UserToProject[]
 
-  credits      UserCredits?
-  projects     Project[]
-  questions    Question[]
-  transactions StripeTransaction[]
+  @@unique([email])
 }
 
-model UserCredits {
-  id      String @id @default(cuid())
-  userId  String @unique
-  credits Int    @default(150)
-  // ASSUMPTION: 150 free credits on sign-up
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([token])
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  issuer                String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
 }
 
 model Project {
-  id          String    @id @default(cuid())
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   name        String
-  repoUrl     String
-  githubToken String?   // encrypted at rest
-  createdAt   DateTime  @default(now())
-  deletedAt   DateTime? // soft delete / archive
+  githubUrl   String
+  githubToken String?
 
-  ownerId String
-  owner   User   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-
+  deletedAt            DateTime?
+  userToProjects       UserToProject[]
   commits              Commit[]
   sourceCodeEmbeddings SourceCodeEmbedding[]
-  questions            Question[]
+}
+
+model UserToProject {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId    String
+  projectId String
+
+  user    User    @relation(fields: [userId], references: [id])
+  project Project @relation(fields: [projectId], references: [id])
+
+  @@unique([userId, projectId])
 }
 
 model Commit {
-  id              String   @id @default(cuid())
-  projectId       String
-  commitHash      String
-  commitMessage   String
-  commitAuthor    String
-  commitDate      DateTime
-  authorAvatarUrl String?
-  aiSummary       String?  // Gemini-generated summary
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id])
+
+  commitMessage      String
+  commitHash         String
+  commitAuthorName   String
+  commitAuthorAvatar String
+  commitDate         DateTime
+
+  // ai summary
+  summary String
 
   @@unique([projectId, commitHash])
 }
 
 model SourceCodeEmbedding {
-  id        String  @id @default(cuid())
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  content    String
+  fileName   String
+  filePath   String
+  chunkIndex Int
+
+  embedding Unsupported("vector(768)")?
+
   projectId String
-  fileName  String
-  content   String
-  // ASSUMPTION: 1536-dim Gemini embedding
-  embedding Unsupported("vector(1536)")?
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@index([projectId])
 }
-
-model Question {
-  id              String   @id @default(cuid())
-  projectId       String
-  userId          String
-  question        String
-  answer          String
-  filesReferenced String[] // denormalized file paths shown in answer
-  createdAt       DateTime @default(now())
-
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model StripeTransaction {
-  id                    String   @id @default(cuid())
-  userId                String
-  credits               Int
-  amount                Int      // in cents
-  stripePaymentIntentId String   @unique
-  createdAt             DateTime @default(now())
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-// Workspace models (PRs, Issues):
-// To be completed after tutorial implementation.
 ```
 
 ---
 
-## 7. Draft tRPC Router Map (Tutorial-Scoped Features)
+## 7. API Route Map
 
-> Procedure names are draft and will be corrected in Step 3 to match the real implementation.
+> Reflects the implemented Next.js API routes.
 
-### `project` router
+| Route | Method | Description |
+|---|---|---|
+| `/api/auth/[...all]` | POST/GET | Better Auth handler. |
+| `/api/project` | POST/GET | Create project + background index / List projects. |
+| `/api/commits` | GET | Fetch commits for a project. |
+| `/api/QA` | POST | Embed query → pgvector search → stream Gemini answer + file refs. |
+| `/api/source-code` | GET | Fetch reconstructed source code chunks. |
 
-| Procedure    | Type     | Description                                                    |
-| ------------ | -------- | -------------------------------------------------------------- |
-| `create`     | mutation | Link a new GitHub repo; kick off indexing job; deduct credits. |
-| `getAll`     | query    | Return all non-archived projects for the current user.         |
-| `getById`    | query    | Return a single project with its commits.                      |
-| `archive`    | mutation | Soft-delete a project (set `deletedAt`).                       |
-| `getCommits` | query    | Return paginated commits for a project.                        |
-
-### `qa` router
-
-| Procedure           | Type     | Description                                               |
-| ------------------- | -------- | --------------------------------------------------------- |
-| `askQuestion`       | mutation | Embed query → pgvector search → Gemini answer → save Q&A. |
-| `getSavedQuestions` | query    | Return all saved Q&A pairs for a project.                 |
-
-### `billing` router
-
-| Procedure               | Type     | Description                                                          |
-| ----------------------- | -------- | -------------------------------------------------------------------- |
-| `getCredits`            | query    | Return current credit balance for the user.                          |
-| `createCheckoutSession` | mutation | Create a Stripe payment intent for a credit bundle.                  |
-| `getTransactionHistory` | query    | Return paginated transaction history.                                |
-| `stripeWebhook`         | —        | Next.js route handler (not tRPC): handle `payment_intent.succeeded`. |
-
-### `workspace` router
-
-> **To be completed after tutorial implementation.** Procedures for PR Intelligence and Issue Intelligence are defined in Step 5/6 once the application's architectural conventions are established.
+> **To be completed in the future.** Procedures for PR Intelligence and Issue Intelligence are defined when Workspace module is implemented.
 
 ---
 
 ## 8. Engineering Philosophy
 
 1. **App Router first.** No `getServerSideProps`, no `getStaticProps`. RSC where possible, client components only when interactivity requires it.
-2. **tRPC is the only API boundary.** No custom REST endpoints except Stripe webhooks (which must be raw HTTP).
+2. **Next.js API Routes are the API boundary.** No tRPC.
 3. **Single database.** pgvector lives inside the same Postgres instance. No separate vector service.
 4. **Gemini for everything AI.** Do not introduce other AI providers.
 5. **Credits protect costs.** Every Gemini call that costs money must deduct credits before execution.
@@ -312,7 +331,7 @@ model StripeTransaction {
 | 2   | Default credit bundle: 100 credits for $2.00.                                  | ASSUMPTION |
 | 3   | PR analysis cost: 5 credits.                                                   | ASSUMPTION |
 | 4   | Issue analysis cost: 3 credits.                                                | ASSUMPTION |
-| 5   | Gemini embedding dimension: 1536.                                              | ASSUMPTION |
+| 5   | Gemini embedding dimension: 768.                                              | RESOLVED |
 | 6   | GitHub token stored encrypted server-side (encryption strategy TBD in Step 3). | ASSUMPTION |
 
 ---
@@ -358,4 +377,4 @@ Build the public marketing landing page per the Landing Page system defined in `
 
 ---
 
-_Next update: Phase 2 — after tutorial implementation is complete._
+_Next update: Workspace Implementation._

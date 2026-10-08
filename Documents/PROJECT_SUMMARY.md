@@ -12,7 +12,7 @@ When joining a new project or reviewing a large codebase, developers often strug
 * **Repository Indexing:** Intelligently reads and processes the entire codebase, automatically ignoring unnecessary build files and dependencies.
 * **AI-Powered Code Understanding:** Provides human-readable summaries of complex code files to make them easier to grasp.
 * **RAG-based Q&A:** Allows developers to chat directly with their codebase. You can ask specific questions like "How does the authentication work?" and get accurate, streamed answers grounded directly on the project's actual source code — not Gemini's general knowledge.
-* **File Reference Tracking:** When answering a question, GitPulse returns metadata about the exact retrieved code files (file name, path, chunk index, similarity score) that were used to construct the answer, available for future display in the UI.
+* **File Reference Tracking & Code Viewing:** When answering a question, GitPulse returns metadata about the exact retrieved code files. The UI displays the AI's answer with Markdown formatting, alongside a styled file-reference panel with tabs. Selecting a tab dynamically reconstructs the full source code for that file by fetching and concatenating chunks from the database on-demand.
 * **Quota-Resilient Embedding Pipeline:** Uses a pool of **6 Gemini API keys** (`GEMINI_API_KEY_1` – `GEMINI_API_KEY_6`) with automatic round-robin rotation and refined 429 detection (`isRateLimitError()`), transparently recovering from quota errors without interrupting the indexing process.
 * **Quota-Resilient Generative AI Pipeline:** Uses a separate pool to load-balance RAG Q&A and Commit Summarization across all 6 keys with round-robin selection, automatic 429 failover, and smart 1-hour cooldowns.
 * **Hybrid File-Filtering System:** A two-pass filter eliminates non-code assets before any chunking or embedding occurs. The first pass uses `GithubRepoLoader`'s `ignoreFiles`/`ignorePaths` lists. The second pass applies the `shouldIndexFile()` function which classifies files using an extension allowlist, a binary extension blocklist, JSON special-casing, asset-path segment detection, and a binary-content heuristic for unknown extensions.
@@ -56,7 +56,7 @@ GitPulse operates using two main flows:
 * **Accessible Knowledge:** Acts as an always-available expert that can instantly answer questions about the repository.
 
 ## 7. Future Scope
-* **Q&A Answer Display:** Render the streamed answer in the Dialog with Markdown and code block formatting; show a file-reference panel listing retrieved files.
+* **Q&A Dialog Polish:** Add copy-to-clipboard functionality for AI answers.
 * **Credits System:** `User.credits` field (default 150) is already in the schema; deduction logic per Q&A call and UI credits display are planned.
 * **GitHub Issues and Pull Request Analysis:** Summarizing active issues and explaining the impact of open pull requests.
 * **Advanced Code-Quality Metrics:** Automatically detecting overly complex files or suggesting refactoring improvements.

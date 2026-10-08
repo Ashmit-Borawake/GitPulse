@@ -189,6 +189,33 @@ Returns all `Project` records where the current user has a `UserToProject` membe
 
 ---
 
+### `GET /api/source-code` — Fetch Source Code
+
+**File:** `src/app/api/source-code/route.ts`
+
+| Property | Value |
+|---|---|
+| Method | GET |
+| Auth | Required |
+| Query | `?projectId=<string>&filePath=<string>` |
+
+**Processing Steps:**
+1. Validate session → 401 if missing
+2. Validate `projectId` and `filePath` query params → 400 if missing
+3. Verify `UserToProject` membership → 403 if user has no access to the project
+4. Query `db.sourceCodeEmbedding.findMany({ where: { projectId, filePath }, orderBy: { chunkIndex: 'asc' } })`
+5. If chunks are empty, return empty source code
+6. Reconstruct original file content by concatenating chunks. Since chunks overlap by `CHUNK_OVERLAP=150` characters, take the full first chunk and drop the first `CHUNK_OVERLAP` characters of each subsequent chunk.
+
+**Response (200):**
+```json
+{
+  "sourceCode": "string (full reconstructed file content)"
+}
+```
+
+---
+
 ### `POST /api/QA` — RAG Q&A Streaming
 
 **File:** `src/app/api/QA/route.ts`
@@ -228,10 +255,11 @@ Headers:
 
 `filesReferences` contains only metadata — `fileName`, `filePath`, `chunkIndex`, `similarity`. No `sourceCode`.
 
-**Error (500):** If `askQuestionWithContext` throws (e.g., all keys unavailable):
+**Error (500):** If `askQuestionWithContext` throws before streaming starts (e.g., all keys unavailable):
 ```json
 { "error": "An error occurred while processing your question." }
 ```
+If an error occurs mid-stream, the stream gracefully enqueues an error message and closes, preventing server crashes.
 
 ---
 

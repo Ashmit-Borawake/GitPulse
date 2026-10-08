@@ -49,6 +49,7 @@ It does **not** cover backend internals — that is `04_BACKEND_AND_RAG.md`.
 | `/api/project` | `src/app/api/project/route.ts` | Auth required | Create/list projects | ✅ Implemented |
 | `/api/commits` | `src/app/api/commits/route.ts` | Auth required | Fetch commits for a project | ✅ Implemented |
 | `/api/QA` | `src/app/api/QA/route.ts` | Auth not checked (projectId validates scope) | RAG Q&A streaming endpoint | ✅ Implemented |
+| `/api/source-code` | `src/app/api/source-code/route.ts` | Auth required | Fetch reconstructed source code for a file | ✅ Implemented |
 
 ---
 
@@ -168,6 +169,8 @@ DashboardPage
 │       └── Link to GitHub URL (ExternalLink icon)
 ├── Grid Layout (grid-cols-5)
 │   └── AskQuestionCard    (spans 3 cols)
+│       ├── Markdown-rendered answer
+│       └── CodeReferences (File tabs with source code)
 │       (WorkspaceCard — commented out, not yet implemented)
 └── CommitLog
 ```
@@ -248,12 +251,10 @@ finally:
 
 ### Current Dialog Content
 
-The Dialog currently renders for testing purposes:
-- The raw `answer` string (plain text, no Markdown rendering)
-- An `<h1>Files References</h1>` heading
-- A `<span>` for each `filesReference.fileName`
-
-This is intentionally minimal — proper styled rendering is planned in a future phase.
+The Dialog currently renders:
+- The streaming `answer` string formatted with Markdown (using `react-markdown` and `react-syntax-highlighter` or similar).
+- A `<CodeReferences>` component which displays a Base UI Tabs interface for the retrieved files.
+- Selecting a file tab fetches its full reconstructed source code from `/api/source-code` and displays it in a syntax-highlighted block.
 
 ### Why the Header is Read Before the Body
 
@@ -429,6 +430,7 @@ All from **shadcn** — copied directly into the project:
 | `sheet.tsx` | Mobile sidebar drawer |
 | `sidebar.tsx` | AppSidebar primitives |
 | `skeleton.tsx` | Loading states |
+| `tabs.tsx` | Base UI tabs used for file references |
 | `textarea.tsx` | Q&A question input |
 | `tooltip.tsx` | Hover hints |
 
@@ -445,6 +447,7 @@ All from **shadcn** — copied directly into the project:
 | AppSidebar / useProject hook | `/api/project` | GET | Fetch user's projects |
 | CommitLog | `/api/commits` | GET `?projectId` | Fetch commits for selected project |
 | AskQuestionCard | `/api/QA` | POST | Submit question, receive stream + file references |
+| CodeReferences | `/api/source-code` | GET `?projectId&filePath` | Fetch reconstructed source code |
 
 ---
 
@@ -551,12 +554,12 @@ reset() → form cleared
 | AppSidebar | ✅ Implemented | Navigation + project list |
 | Dashboard page | ✅ Implemented | Banner + grid layout |
 | Ask Question card | ✅ Implemented | Form + streaming dialog |
-| Q&A Dialog | 🟡 Partial | Raw text answer + plain file name list |
+| Q&A Dialog | ✅ Implemented | Styled markdown answer |
 | Commit Log | ✅ Implemented | Timeline with AI summaries |
 | Create Project page | ✅ Implemented | Form with optional token |
 | QA page (`/QA`) | 🟡 Placeholder | Exists but minimal content |
-| Markdown rendering | ⚪ Not implemented | Answer shown as plain text |
-| File reference panel | 🟡 Partial | File names only, no styled panel |
+| Markdown rendering | ✅ Implemented | Used in Q&A Dialog |
+| File reference panel | ✅ Implemented | Tabs showing reconstructed source code |
 | Credits display | ⚪ Not implemented | Planned |
 | Team members | ⚪ Not implemented | Component commented out |
 | Invite button | ⚪ Not implemented | Component commented out |
@@ -569,9 +572,7 @@ reset() → form cleared
 
 ### Immediate Next Steps
 
-- **Markdown rendering for Q&A answers:** Replace plain text with `react-markdown` or similar. Add syntax-highlighted code blocks (e.g., `react-syntax-highlighter` or `shiki`).
-- **File reference panel:** Replace raw `<span>` list with a styled panel showing file name, path, and similarity score. Potentially syntax-highlight the relevant chunk on click.
-- **Q&A Dialog polish:** Style the Dialog header with GitPulse branding. Add copy-to-clipboard for answers.
+- **Q&A Dialog polish:** Add copy-to-clipboard for answers.
 
 ### Medium-Term
 
