@@ -25,6 +25,52 @@ export default function AskQuestionCard() {
   const [filesReferences, setFilesReferences] = React.useState<
     CodeFileReference[]
   >([]);
+  const [saving, setSaving] = React.useState(false);
+
+  const handleSaveAnswer = async () => {
+    if (!project?.id) {
+      toast.error("No project selected.");
+      return;
+    }
+
+    if (!question.trim() || !answer.trim()) {
+      toast.error("The question and answer are required.");
+      return;
+    }
+
+    if (loading || saving) return;
+
+    setSaving(true);
+    try {
+      const res = await fetch("/api/QASave", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: project.id,
+          question: question.trim(),
+          answer,
+          filesReferences,
+        }),
+      });
+
+      const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+
+      if (!res.ok) {
+        throw new Error(
+          typeof data.error === "string" ? data.error : "Failed to save answer."
+        );
+      }
+
+      toast.success("Answer saved successfully!");
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to save answer.";
+      console.error("[AskQuestionCard] Save failed:", error);
+      toast.error(message);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const onSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -115,14 +161,26 @@ export default function AskQuestionCard() {
         <DialogContent className="sm:max-w-[90vw] max-h-[90vh] border-2 border-black p-0 overflow-hidden block">
           <div className="w-full max-h-[90vh] overflow-y-auto p-4 grid gap-4 [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:bg-gray-300 dark:[&::-webkit-scrollbar-thumb]:bg-gray-700">
           <DialogHeader>
-            <DialogTitle>
-              <div className="flex items-center gap-2">
-                <div className="bg-primary text-primary-foreground flex h-8 w-8 items-center justify-center rounded-md font-bold">
-                  G
+            <div className="flex items-center justify-between gap-4">
+              <DialogTitle>
+                <div className="flex items-center gap-2">
+                  <div className="bg-primary text-primary-foreground flex h-8 w-8 items-center justify-center rounded-md font-bold">
+                    G
+                  </div>
+                  <span className="text-base font-semibold">GitPulse</span>
                 </div>
-                <span className="text-base font-semibold">GitPulse</span>
-              </div>
-            </DialogTitle>
+              </DialogTitle>
+
+              <Button
+                type="button"
+                variant="outline"
+                disabled={loading || saving || !answer.trim() || !project?.id}
+                onClick={handleSaveAnswer}
+                className="cursor-pointer"
+              >
+                {saving ? "Saving…" : "Save Answer"}
+              </Button>
+            </div>
           </DialogHeader>
 
           {/* Answer area — loader until first chunk arrives */}

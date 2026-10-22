@@ -69,11 +69,11 @@ export async function POST(req: Request) {
       },
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
+    const message = err instanceof Error ? err.message : 'An error occurred while processing your question.';
     console.error('[POST /api/QA] Error:', message);
 
     return NextResponse.json(
-      { error: 'An error occurred while processing your question.' },
+      { error: message },
       { status: 500 },
     );
   }
